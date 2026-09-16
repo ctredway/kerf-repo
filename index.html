@@ -120,16 +120,18 @@
   .stateChip[data-s="Check"],.stateChip[data-s="Sleep"]{background:#243447;color:#9cc1e8}
   #hdrSpindle.on{background:#4d2620;color:#ff9d8d;cursor:pointer}
   #hdrSpindle.on:hover{background:#5c2e26}
-  #jogGrid{display:grid;grid-template-columns:repeat(3,46px) 18px 46px;grid-auto-rows:40px;gap:5px}
-  #jogGrid button{padding:0;font-family:var(--mono);font-size:13px;touch-action:none;user-select:none}
-  #jogIncRow button{font-family:var(--mono);padding:5px 9px}
+  #jogGrid{display:grid;grid-template-columns:repeat(3,62px) 20px 62px;grid-auto-rows:52px;gap:6px}
+  #jogGrid button{padding:0;font-family:var(--mono);font-size:16px;touch-action:none;user-select:none}
+  #rapidGrid{display:grid;grid-template-columns:repeat(3,62px);grid-auto-rows:40px;gap:6px}
+  #rapidGrid button{padding:0;font-family:var(--mono);font-size:14px}
+  #jogIncRow button{font-family:var(--mono);padding:8px 13px;font-size:14px}
   #jogIncRow button.incOn{background:var(--amber);border-color:var(--amber);color:#1a1407;font-weight:600}
   #jogModal{position:fixed;inset:0;background:rgba(10,13,17,.65);display:flex;align-items:center;justify-content:center;z-index:60}
   #jogModal[hidden]{display:none}
-  #jogPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;width:440px;box-shadow:0 14px 44px rgba(0,0,0,.55)}
+  #jogPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 20px;width:520px;box-shadow:0 14px 44px rgba(0,0,0,.55)}
   #jogHead{display:flex;align-items:center;gap:10px;margin-bottom:4px}
   #jogClose{padding:4px 10px}
-  #jmDro{display:flex;gap:22px;font-family:var(--mono);font-size:21px;margin:8px 0 14px}
+  #jmDro{display:flex;gap:26px;font-family:var(--mono);font-size:26px;margin:8px 0 14px}
   #jmDro .ax i{color:var(--muted);font-size:12px;margin-right:7px;font-style:normal}
   #jogGrid button.kbdOn{background:var(--amber);border-color:var(--amber);color:#1a1407}
   .kbdHint{color:var(--faint);font-size:12px;margin-top:12px;line-height:1.6}
@@ -377,10 +379,20 @@
       <label>Fast Z</label><input type="number" id="jogFeedZ" value="600" step="50">
       <span style="color:var(--faint)">mm/min</span>
     </div>
-    <div id="jogGrid">
-      <button data-jog="-1,1,0">↖</button><button data-jog="0,1,0">Y+</button><button data-jog="1,1,0">↗</button><span></span><button data-jog="0,0,1">Z+</button>
-      <button data-jog="-1,0,0">X−</button><span></span><button data-jog="1,0,0">X+</button><span></span><span></span>
-      <button data-jog="-1,-1,0">↙</button><button data-jog="0,-1,0">Y−</button><button data-jog="1,-1,0">↘</button><span></span><button data-jog="0,0,-1">Z−</button>
+    <div style="display:flex;gap:22px;align-items:flex-start">
+      <div id="jogGrid">
+        <button data-jog="-1,1,0">↖</button><button data-jog="0,1,0">Y+</button><button data-jog="1,1,0">↗</button><span></span><button data-jog="0,0,1">Z+</button>
+        <button data-jog="-1,0,0">X−</button><span></span><button data-jog="1,0,0">X+</button><span></span><span></span>
+        <button data-jog="-1,-1,0">↙</button><button data-jog="0,-1,0">Y−</button><button data-jog="1,-1,0">↘</button><span></span><button data-jog="0,0,-1">Z−</button>
+      </div>
+      <div>
+        <div style="color:var(--muted);font-size:12px;margin-bottom:6px">Rapid position <span style="color:var(--faint)">(needs homing)</span></div>
+        <div id="rapidGrid">
+          <button data-rp="0,1" title="Back left">◰</button><button data-rp="0.5,1" title="Back center">▴</button><button data-rp="1,1" title="Back right">◳</button>
+          <button data-rp="0,0.5" title="Left center">◂</button><button data-rp="0.5,0.5" title="Table center">●</button><button data-rp="1,0.5" title="Right center">▸</button>
+          <button data-rp="0,0" title="Front left">◱</button><button data-rp="0.5,0" title="Front center">▾</button><button data-rp="1,0" title="Front right">◲</button>
+        </div>
+      </div>
     </div>
     <div class="mSection" style="margin:14px 0 0">
       <h3>Work zero</h3>
@@ -389,6 +401,7 @@
       </div>
       <div class="mRow">
         <button id="gotoZero" title="Raises Z to 5 mm below the top of travel first (machine must be homed)">Go to XY zero</button>
+        <button id="jogProbe" title="Jog over the plate, then probe — opens the BitZero panel">Probe…</button>
       </div>
     </div>
     <p class="kbdHint">Keyboard: ← → = X &nbsp;·&nbsp; ↑ ↓ = Y &nbsp;·&nbsp; PgUp PgDn = Z. In Fast, hold to jog — release stops instantly. Esc closes.</p>
@@ -2026,6 +2039,22 @@ function bzStart(){
   });
 }
 
+/* rapid position: fractions of the controller's real travel, 10 mm off the
+   rails, always moving at traverse height. Machine coords, so homing required. */
+function rapidTo(fx, fy){
+  if (!requireIdle('rapid position')) return;
+  var t = SERIAL.settings;
+  if (!SERIAL.homedSeen || t[130] === undefined || t[131] === undefined){
+    logC('err', 'rapid position needs a homed machine and controller config \u2014 home first');
+    return;
+  }
+  var m = 10;
+  var x = -(t[130] - m) + (t[130] - 2 * m) * fx;
+  var y = -(t[131] - m) + (t[131] - 2 * m) * fy;
+  sendLine('G53 G0 Z-' + travelZ().toFixed(1));
+  sendLine('G53 G0 X' + x.toFixed(1) + ' Y' + y.toFixed(1));
+}
+
 /* ---------------- jog modal + keyboard ---------------- */
 function jogModalOpen(){
   if (!SERIAL.connected){ logC('err', 'connect to the machine first'); return; }
@@ -2971,6 +3000,16 @@ function wireMachine(){
     if (!requireIdle('go to zero')) return;
     sendLine('G53 G0 Z-' + travelZ().toFixed(1)); // retract near top of travel (requires homing)
     sendLine('G90 G0 X0 Y0');
+  });
+  document.querySelectorAll('#rapidGrid button[data-rp]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var f = b.dataset.rp.split(',').map(Number);
+      rapidTo(f[0], f[1]);
+    });
+  });
+  document.getElementById('jogProbe').addEventListener('click', function(){
+    jogModalClose();   // releases keyboard jog cleanly
+    bzOpenModal();
   });
 
   document.getElementById('spinOn').addEventListener('click', function(){
