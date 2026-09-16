@@ -1,0 +1,6 @@
+# GitHub renders a "Sponsor" button on the repo from this file.
+# Uncomment/fill the platforms you set up; delete the rest.
+
+github: [ctredway]          # requires GitHub Sponsors enrollment (github.com/sponsors)
+ko_fi: # your-kofi-handle
+custom: # ["https://paypal.me/yourhandle", "https://buymeacoffee.com/yourhandle"]
