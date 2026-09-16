@@ -148,6 +148,12 @@
   #bzModal[hidden]{display:none}
   #bzPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;width:430px;box-shadow:0 14px 44px rgba(0,0,0,.55)}
   #bzCircuit.ok{background:#2b4029;color:#a9d29c}
+  #runBar{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:6;display:none;align-items:center;gap:8px;background:rgba(23,28,34,.92);border:1px solid var(--line);border-radius:6px;padding:7px 12px}
+  #runBar.on{display:flex}
+  #rbProg{width:170px;height:6px;background:var(--panel-deep);border-radius:3px;overflow:hidden}
+  #rbFill{height:100%;width:0%;background:var(--amber);transition:width .2s}
+  #rbTxt{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
+  #rbStop{font-size:12.5px}
   .iconBtn{padding:6px 8px;line-height:0}
   .iconBtn svg{display:block;width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
   .iconBtn.primary svg{stroke:#1a1407}
@@ -197,6 +203,14 @@
     <div id="viewport"></div>
     <div id="viewHud">
       <button id="fitBtn">Fit</button>
+    </div>
+    <div id="runBar">
+      <button id="rbEstop" class="estop" title="EMERGENCY STOP — immediate halt">STOP</button>
+      <button id="rbHold" class="danger iconBtn" title="Feed hold — pause motion now"><svg viewBox="0 0 16 16"><line x1="6" y1="3.5" x2="6" y2="12.5"/><line x1="10" y1="3.5" x2="10" y2="12.5"/></svg></button>
+      <button id="rbResume" class="iconBtn" title="Cycle start / resume"><svg viewBox="0 0 16 16"><path d="M5.5 3.5 L12 8 L5.5 12.5 Z"/></svg></button>
+      <button id="rbStop" title="End the job — hold, then reset and clear the buffer">End job</button>
+      <div id="rbProg"><div id="rbFill"></div></div>
+      <span id="rbTxt">—</span>
     </div>
     <div id="legend">
       <div class="lg"><div class="swatch" style="border-color:var(--cut-done)"></div>cut</div>
@@ -2852,6 +2866,8 @@ function jobStart(){
   JOB.startedAt = performance.now();
   JOB.useBS = useBS;
   bzCloseModal();
+  fitView();
+  animateView(0, 0.02); // snap to Top for the run \u2014 camera stays free afterward
   playing = false; updatePlayBtn(); setTime(0);
   logC('sys', 'job started — ' + JOB.total + ' blocks' + (list.injected ? ' (incl. ' + list.injected + ' spin-up dwells)' : ''));
   if (JOB.useBS) probeStart('ref', jobFill);
@@ -2891,9 +2907,17 @@ function updateJobUI(statusText){
   var pct = JOB.total ? Math.round(JOB.acked / JOB.total * 100) : 0;
   document.getElementById('jobBarFill').style.width = pct + '%';
   var el = document.getElementById('jobStatus');
-  if (statusText) el.textContent = statusText;
-  else if (JOB.active) el.textContent = 'line ' + JOB.acked + ' / ' + JOB.total + ' (' + pct + '%)';
-  else if (!JOB.acked) el.textContent = 'no job running';
+  var txt;
+  if (statusText) txt = statusText;
+  else if (JOB.active) txt = 'line ' + (JOB.lastLn || 0) + ' \u00b7 ' + pct + '% \u00b7 ' +
+                             fmtTime((performance.now() - JOB.startedAt) / 1000);
+  else if (!JOB.acked) txt = 'no job running';
+  else txt = el.textContent;
+  el.textContent = txt;
+  // viewport run bar
+  document.getElementById('runBar').classList.toggle('on', JOB.active);
+  document.getElementById('rbFill').style.width = pct + '%';
+  document.getElementById('rbTxt').textContent = txt;
 }
 
 /* ---------------- machine tab wiring ---------------- */
@@ -2917,6 +2941,10 @@ function wireMachine(){
   document.getElementById('hdrResume').addEventListener('click', jobResume);
   document.getElementById('estopBtn').addEventListener('click', emergencyStop);
   document.getElementById('jogEstop').addEventListener('click', emergencyStop);
+  document.getElementById('rbEstop').addEventListener('click', emergencyStop);
+  document.getElementById('rbHold').addEventListener('click', jobHold);
+  document.getElementById('rbResume').addEventListener('click', jobResume);
+  document.getElementById('rbStop').addEventListener('click', jobStop);
 
   document.getElementById('alarmHome').addEventListener('click', function(){ sendLine('$H'); });
 
