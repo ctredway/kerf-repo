@@ -392,21 +392,18 @@
       <button id="setClose" title="Close (Esc)">✕</button>
     </div>
     <div id="smTabs">
-      <button data-sm="smDisplay" class="active">Display</button>
-      <button data-sm="smMachine">Machine</button>
+      <button data-sm="smMachine" class="active">Machine</button>
       <button data-sm="smAcc">Accessories</button>
       <button data-sm="smJob">Job</button>
       <button data-sm="smProfile">Profile</button>
     </div>
 
-    <div class="smPane active" id="smDisplay">
-      <div class="row mRow"><input type="checkbox" id="showRapids" checked><label for="showRapids">Show rapid moves</label></div>
-      <div class="row mRow"><input type="checkbox" id="showEnvelope"><label for="showEnvelope">Show work area outline</label></div>
-    </div>
-
-    <div class="smPane" id="smMachine">
+    <div class="smPane active" id="smMachine">
       <div class="mRow"><span class="chip" id="modelChip">model: connect to detect</span></div>
-      <h3 style="font-size:13px;font-weight:600;margin:6px 0 8px">Work area</h3>
+      <h3 style="font-size:13px;font-weight:600;margin:6px 0 8px">Display</h3>
+      <div class="mRow"><input type="checkbox" id="showRapids" checked><label for="showRapids">Show rapid moves</label></div>
+      <div class="mRow"><input type="checkbox" id="showEnvelope"><label for="showEnvelope">Show work area outline</label></div>
+      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Work area</h3>
       <div class="mRow">
         <select id="machinePreset">
           <option value="">Custom…</option>
