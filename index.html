@@ -142,6 +142,10 @@
   #smTabs button.active{color:var(--ink);border-bottom-color:var(--amber);font-weight:600}
   .smPane{display:none;padding:16px 18px;overflow-y:auto}
   .smPane.active{display:block}
+  #bzModal{position:fixed;inset:0;background:rgba(10,13,17,.65);display:flex;align-items:center;justify-content:center;z-index:65}
+  #bzModal[hidden]{display:none}
+  #bzPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;width:430px;box-shadow:0 14px 44px rgba(0,0,0,.55)}
+  #bzCircuit.ok{background:#2b4029;color:#a9d29c}
   .iconBtn{padding:6px 8px;line-height:0}
   .iconBtn svg{display:block;width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
   .iconBtn.primary svg{stroke:#1a1407}
@@ -272,6 +276,13 @@
             <div class="mRow">
               <button id="jogOpen" class="primary">Open jog panel</button>
               <span style="color:var(--faint);font-size:12px">arrow keys &amp; PgUp/PgDn work while it's open</span>
+            </div>
+          </div>
+
+          <div class="mSection">
+            <h3>Probe</h3>
+            <div class="mRow">
+              <button id="bzOpen">BitZero Z zero…</button>
             </div>
           </div>
 
@@ -453,7 +464,7 @@
         <select id="spinType"><option value="router">Trim router</option><option value="vfd">VFD spindle</option></select>
         <label>spin-up</label><input type="number" id="spinupSec" value="3" step="0.5" min="0" style="width:64px"><span style="color:var(--faint)">s dwell after M3</span>
       </div>
-      <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">BitSetter probing runs automatically on jobs with tool changes when enabled with a captured position. BitZero corner probing is the next build.</p>
+      <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">BitSetter probing runs automatically on jobs with tool changes when enabled with a captured position. BitZero Z zeroing lives in Machine → Probe; corner probing is the next build.</p>
     </div>
 
     <div class="smPane" id="smJob">
@@ -475,6 +486,30 @@
       </div>
       <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">All settings save automatically in this browser. Export a copy as backup — importing Carbide Motion's shapeoko.json pulls in your BitSetter position and accessory setup.</p>
     </div>
+  </div>
+</div>
+
+<div id="bzModal" hidden>
+  <div id="bzPanel">
+    <div id="jogHead" style="margin-bottom:8px">
+      <button id="bzEstop" class="estop" title="EMERGENCY STOP — immediate halt">STOP</button>
+      <b style="font-size:15px">BitZero — Z zero</b>
+      <div style="flex:1"></div>
+      <button id="bzClose" title="Close (Esc)">✕</button>
+    </div>
+    <p class="note" style="color:var(--muted);font-size:12.5px;line-height:1.6;margin-bottom:10px">
+      Place the plate on top of the stock. Clip the magnet to the collet nut.
+      Jog the tool tip 2–10 mm above the plate, roughly centered.
+    </p>
+    <div class="mRow"><span class="stateChip" id="bzCircuit">circuit: touch the probe pin to the plate to verify</span></div>
+    <div class="mRow">
+      <label>Plate thickness</label>
+      <input type="number" id="bzThk" step="0.01" min="1" max="30" style="width:84px">
+      <span style="color:var(--faint)">mm — caliper your plate once; saved to the profile</span>
+    </div>
+    <div class="mRow"><button id="bzStart" class="primary">Probe Z</button></div>
+    <div class="mRow" id="bzStatusLine" style="color:var(--muted);font-size:12px">ready</div>
+    <p class="kbdHint">Probes down max 25 mm (fast), backs off, re-probes slow, sets work Z0 to the stock top via G10 L2, then lifts 10 mm clear. Verify with the paper test before cutting.</p>
   </div>
 </div>
 
@@ -1661,6 +1696,7 @@ function wire(){
   window.addEventListener('keydown', function(e){
     if (!document.getElementById('jogModal').hidden) return; // jog modal owns the keyboard
     if (!document.getElementById('setModal').hidden) return;  // settings modal open
+    if (!document.getElementById('bzModal').hidden) return;   // probe modal open
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.code === 'Space'){ e.preventDefault(); document.getElementById('btnPlay').click(); }
     else if (e.code === 'ArrowRight'){ stepLine(1); }
@@ -1823,96 +1859,171 @@ function emergencyStop(){
   jogFastStop(false);
   KEYJOG.code = null;
   jogModalClose();
+  bzCloseModal();
   SERIAL.homedSeen = false;
   updateJobUI('EMERGENCY STOP — machine reset. Re-home before any further motion.');
   logC('err', 'EMERGENCY STOP — soft reset sent. Spindle off, motion halted. Home the machine before continuing; work zero survives, machine position does not.');
 }
 
-/* ---------------- BitSetter tool-length probing ----------------
-   Two-touch probe (fast seek, back off, slow re-probe) at the stored button
-   position. Reference tool probed at job start; each tool change re-probes
-   and applies the length delta via G43.1 — volatile, so a reset can never
-   permanently alter the work offset. */
-var PROBE = {active:false, steps:null, i:0, kind:null, onDone:null,
-             lastPRB:null, refZ:null, previewDone:false};
+/* ---------------- probing engine ----------------
+   Generic sequential prober: steps are strings, or {cmd, capture:'label'} for
+   G38.2 moves whose [PRB] result should be recorded. Consumers: BitSetter
+   tool-length (job-integrated) and BitZero Z zeroing (standalone modal). */
+var PROBE = {active:false, steps:null, i:0, name:null, captures:{}, pendingCapture:null,
+             onResult:null, refZ:null, previewDone:false, bzPreviewDone:false};
 
+function probeRun(name, steps, onResult){
+  if (SERIAL.pins.indexOf('P') >= 0){
+    probeFail('probe input already triggered before starting \u2014 check the clip and wiring');
+    return;
+  }
+  PROBE.active = true; PROBE.name = name;
+  PROBE.steps = steps; PROBE.i = 0;
+  PROBE.captures = {}; PROBE.pendingCapture = null;
+  PROBE.onResult = onResult;
+  logC('sys', name + ' probe starting');
+  probeNext();
+}
+function probeNext(){
+  if (!PROBE.active) return;
+  if (PROBE.i >= PROBE.steps.length){ probeFinish(); return; }
+  var it = PROBE.steps[PROBE.i++];
+  if (typeof it === 'string'){ PROBE.pendingCapture = null; sendLine(it); }
+  else { PROBE.pendingCapture = it.capture; sendLine(it.cmd); }
+}
+function probeOnPRB(z, success){
+  if (!PROBE.active) return;
+  if (!success){
+    probeFail('probe travelled full distance without contact \u2014 tool loaded? clip attached?');
+    return;
+  }
+  if (PROBE.pendingCapture) PROBE.captures[PROBE.pendingCapture] = z;
+}
+function probeFail(msg){
+  var wasActive = PROBE.active;
+  PROBE.active = false; PROBE.onDone = null; PROBE.onResult = null;
+  logC('err', 'probe FAILED: ' + msg);
+  if (SERIAL.connected) sendLine('G90');
+  if (JOB.active){
+    JOB.active = false; JOB.inflight = []; JOB.toolWait = null;
+    maybeToolPrompt();
+    updateJobUI('probe failed \u2014 job aborted. ' + msg);
+  } else if (wasActive){
+    updateJobUI('probe failed. ' + msg);
+    bzStatus('failed \u2014 ' + msg);
+  }
+}
+function probeFinish(){
+  PROBE.active = false;
+  var cb = PROBE.onResult; PROBE.onResult = null;
+  if (cb) cb(PROBE.captures);
+}
+
+/* ----- BitSetter (job-integrated tool length) ----- */
 function bitSetterReady(){ // null = ready, else the reason it isn't
   if (!PROFILE.bitSetter.enabled) return 'disabled in Machine profile';
   if (PROFILE.bitSetter.x === null || PROFILE.bitSetter.y === null)
-    return 'position not set — jog over the button and use Capture';
+    return 'position not set \u2014 jog over the button and use Capture';
   if (!SERIAL.homedSeen) return 'machine has not homed this session';
   var s = SERIAL.settings;
   if (s[130] === undefined || s[131] === undefined) return 'controller travel not read yet';
   var x = PROFILE.bitSetter.x, y = PROFILE.bitSetter.y;
   if (x > 0.5 || x < -s[130] - 1 || y > 0.5 || y < -s[131] - 1)
     return 'stored position (' + x + ', ' + y + ') is outside controller travel ' +
-           s[130] + ' \u00d7 ' + s[131] + ' — re-capture it, or fix $130/$131';
+           s[130] + ' \u00d7 ' + s[131] + ' \u2014 re-capture it, or fix $130/$131';
   return null;
 }
-function probeSteps(){
+function probeSteps(){ // BitSetter sequence (name kept: the preflight preview prints it)
   var down = Math.max(10, (SERIAL.settings[132] || 80) - travelZ() - 1);
   return [
     'G53 G0 Z-' + travelZ().toFixed(1),
     'G53 G0 X' + PROFILE.bitSetter.x.toFixed(3) + ' Y' + PROFILE.bitSetter.y.toFixed(3),
     'G21 G91',
-    'G38.2 Z-' + down.toFixed(1) + ' F200',
+    {cmd: 'G38.2 Z-' + down.toFixed(1) + ' F200', capture: 'zf'},
     'G0 Z2',
-    'G38.2 Z-5 F40',
+    {cmd: 'G38.2 Z-5 F40', capture: 'z'},
     'G90',
     'G53 G0 Z-' + travelZ().toFixed(1)
   ];
 }
-function probeStart(kind, onDone){
-  if (SERIAL.pins.indexOf('P') >= 0){
-    probeFail('probe input already triggered before starting — check the BitSetter button and wiring');
-    return;
-  }
-  PROBE.active = true; PROBE.kind = kind; PROBE.onDone = onDone;
-  PROBE.steps = probeSteps(); PROBE.i = 0; PROBE.lastPRB = null;
+function probeStart(kind, onDone){ // BitSetter entry point (job code calls this)
   updateJobUI(kind === 'ref' ? 'BitSetter: probing reference tool\u2026' : 'BitSetter: probing new tool\u2026');
-  logC('sys', 'BitSetter: ' + (kind === 'ref' ? 'reference' : 'new tool') + ' probe starting');
-  probeNext();
+  probeRun(kind === 'ref' ? 'BitSetter reference' : 'BitSetter tool', probeSteps(), function(cap){
+    if (cap.z === undefined){ probeFail('sequence completed but no probe result was received'); return; }
+    if (kind === 'ref'){
+      PROBE.refZ = cap.z;
+      logC('sys', 'BitSetter: reference tool triggers at machine Z ' + PROBE.refZ.toFixed(3));
+    } else {
+      var delta = cap.z - PROBE.refZ;
+      sendLine('G43.1 Z' + delta.toFixed(3));
+      logC('sys', 'BitSetter: new tool triggers at Z ' + cap.z.toFixed(3) +
+           ' \u2014 length offset ' + (delta >= 0 ? '+' : '') + delta.toFixed(3) + ' mm applied (G43.1)');
+    }
+    if (onDone) onDone();
+  });
 }
-function probeNext(){
-  if (!PROBE.active) return;
-  if (PROBE.i >= PROBE.steps.length){ probeFinish(); return; }
-  sendLine(PROBE.steps[PROBE.i++]);
+
+/* ----- BitZero (standalone Z zeroing) ----- */
+var BZ = {circuitOk:false};
+function bzStatus(t){
+  var el = document.getElementById('bzStatusLine');
+  if (el) el.textContent = t;
 }
-function probeOnPRB(z, success){
-  if (!PROBE.active) return;
-  if (!success){
-    probeFail('probe travelled full distance without contact — tool loaded? BitSetter plugged in?');
-    return;
+function bitZeroSteps(){
+  return [
+    'G21 G91',
+    {cmd: 'G38.2 Z-25 F150', capture: 'zf'},
+    'G0 Z1.5',
+    {cmd: 'G38.2 Z-4 F40', capture: 'z'},
+    'G0 Z3',
+    'G90'
+  ];
+}
+function bzOpenModal(){
+  if (!SERIAL.connected){ logC('err', 'connect to the machine first'); return; }
+  if (JOB.active) return;
+  BZ.circuitOk = false;
+  bzUpdateCircuit();
+  bzStatus('ready');
+  document.getElementById('bzModal').hidden = false;
+}
+function bzCloseModal(){ document.getElementById('bzModal').hidden = true; }
+function bzUpdateCircuit(){
+  var el = document.getElementById('bzCircuit');
+  if (!el || document.getElementById('bzModal').hidden) return;
+  if (!BZ.circuitOk && !PROBE.active && SERIAL.pins.indexOf('P') >= 0){
+    BZ.circuitOk = true;
+    logC('sys', 'BitZero: probe circuit verified');
   }
-  PROBE.lastPRB = z;
+  el.textContent = BZ.circuitOk ? 'circuit verified \u2713'
+                                : 'circuit: touch the probe pin to the plate to verify';
+  el.classList.toggle('ok', BZ.circuitOk);
 }
-function probeFail(msg){
-  var wasActive = PROBE.active;
-  PROBE.active = false; PROBE.onDone = null;
-  logC('err', 'BitSetter probe FAILED: ' + msg);
-  if (SERIAL.connected) sendLine('G90');
-  if (JOB.active){
-    JOB.active = false; JOB.inflight = []; JOB.toolWait = null;
-    maybeToolPrompt();
-    updateJobUI('probe failed — job aborted. ' + msg);
-  } else if (wasActive){
-    updateJobUI('probe failed. ' + msg);
+function bzStart(){
+  if (!SERIAL.connected || JOB.active || PROBE.active) return;
+  if (SERIAL.state === 'Alarm'){ bzStatus('machine is locked \u2014 home ($H) or unlock ($X) first'); return; }
+  readUIToProfile();
+  var thk = PROFILE.bitZero.thk;
+  if (!(thk > 0 && thk < 30)){ bzStatus('set the plate thickness first (caliper it)'); return; }
+  if (!BZ.circuitOk){ bzStatus('verify the circuit first \u2014 touch the probe pin to the plate'); return; }
+  if (!PROBE.bzPreviewDone){
+    PROBE.bzPreviewDone = true;
+    var seq = bitZeroSteps().map(function(x){ return typeof x === 'string' ? x : x.cmd; }).join('\n    ');
+    if (!confirm('BitZero Z probe \u2014 first run this session. Exact sequence:\n\n    ' + seq +
+                 '\n\nThen: G10 L2 P0 Z(trigger \u2212 ' + thk + ' mm) sets stock top as work Z0, and the tool lifts 10 mm clear.' +
+                 '\n\nTool tip must be 2\u201310 mm above the plate. Continue?')) return;
   }
-}
-function probeFinish(){
-  PROBE.active = false;
-  if (PROBE.lastPRB === null){ probeFail('sequence completed but no probe result was received'); return; }
-  if (PROBE.kind === 'ref'){
-    PROBE.refZ = PROBE.lastPRB;
-    logC('sys', 'BitSetter: reference tool triggers at machine Z ' + PROBE.refZ.toFixed(3));
-  } else {
-    var delta = PROBE.lastPRB - PROBE.refZ;
-    sendLine('G43.1 Z' + delta.toFixed(3));
-    logC('sys', 'BitSetter: new tool triggers at Z ' + PROBE.lastPRB.toFixed(3) +
-         ' — length offset ' + (delta >= 0 ? '+' : '') + delta.toFixed(3) + ' mm applied (G43.1)');
-  }
-  var cb = PROBE.onDone; PROBE.onDone = null;
-  if (cb) cb();
+  bzStatus('probing\u2026');
+  probeRun('BitZero Z', bitZeroSteps(), function(cap){
+    if (cap.z === undefined){ probeFail('sequence completed but no probe result was received'); return; }
+    var wcoZ = cap.z - thk;
+    sendLine('G10 L2 P0 Z' + wcoZ.toFixed(3));
+    var lift = (thk + 10).toFixed(2);
+    sendLine('G90 G0 Z' + lift);
+    logC('sys', 'BitZero: stock top set as work Z0 (plate ' + thk.toFixed(2) +
+         ' mm, trigger at machine Z ' + cap.z.toFixed(3) + '). Lifting to Z' + lift + '.');
+    bzStatus('done \u2014 Z0 = stock top. Paper-test it before cutting.');
+  });
 }
 
 /* ---------------- jog modal + keyboard ---------------- */
@@ -2233,6 +2344,9 @@ function uiStatus(){
   jm.textContent = st; jm.dataset.s = st;
   document.getElementById('jogOpen').disabled = JOB.active;
   if (JOB.active && !document.getElementById('jogModal').hidden) jogModalClose();
+  document.getElementById('bzOpen').disabled = JOB.active;
+  if (JOB.active && !document.getElementById('bzModal').hidden) bzCloseModal();
+  bzUpdateCircuit();
   // live marker while a job (or manual motion during one) is happening
   if (JOB.active && marker){
     marker.position.copy(w3(SERIAL.wpos.x, SERIAL.wpos.y, SERIAL.wpos.z));
@@ -2257,7 +2371,7 @@ function uiConn(on){
 /* ---------------- machine profile (persisted) ---------------- */
 var PROFILE = {
   bitSetter:{enabled:false, x:null, y:null},
-  bitZero:{enabled:false, version:'v2'},
+  bitZero:{enabled:false, version:'v2', thk:null},
   spindle:{type:'router', spinup:3},
   jog:{inc:'1', fastXY:3000, fastZ:600},
   run:{highStart:true, travelZ:5},
@@ -2299,6 +2413,7 @@ function applyProfileToUI(){
   if (PROFILE.bitSetter.y !== null) v('bsY').value = PROFILE.bitSetter.y;
   v('bzEnable').checked = PROFILE.bitZero.enabled;
   v('bzVersion').value = PROFILE.bitZero.version;
+  if (PROFILE.bitZero.thk !== null) v('bzThk').value = PROFILE.bitZero.thk;
   v('spinType').value = PROFILE.spindle.type;
   v('spinupSec').value = PROFILE.spindle.spinup;
   v('jogFeedXY').value = PROFILE.jog.fastXY;
@@ -2322,6 +2437,7 @@ function readUIToProfile(){
   PROFILE.bitSetter.y = v('bsY').value === '' ? null : parseFloat(v('bsY').value);
   PROFILE.bitZero.enabled = v('bzEnable').checked;
   PROFILE.bitZero.version = v('bzVersion').value;
+  PROFILE.bitZero.thk = v('bzThk').value === '' ? null : parseFloat(v('bzThk').value);
   PROFILE.spindle.type = v('spinType').value;
   PROFILE.spindle.spinup = parseFloat(v('spinupSec').value) || 0;
   PROFILE.jog.fastXY = parseFloat(v('jogFeedXY').value) || 3000;
@@ -2706,6 +2822,7 @@ function jobStart(){
   JOB.idx = 0; JOB.acked = 0; JOB.lastLn = 0; JOB.inflight = [];
   JOB.startedAt = performance.now();
   JOB.useBS = useBS;
+  bzCloseModal();
   playing = false; updatePlayBtn(); setTime(0);
   logC('sys', 'job started — ' + JOB.total + ' blocks' + (list.injected ? ' (incl. ' + list.injected + ' spin-up dwells)' : ''));
   if (JOB.useBS) probeStart('ref', jobFill);
@@ -2790,11 +2907,23 @@ function wireMachine(){
     });
   });
   window.addEventListener('keydown', function(e){
-    if (e.code === 'Escape' && !document.getElementById('setModal').hidden){
-      e.stopImmediatePropagation();
-      settingsClose();
+    if (e.code !== 'Escape') return;
+    if (!document.getElementById('bzModal').hidden && !PROBE.active){
+      e.stopImmediatePropagation(); bzCloseModal(); return;
+    }
+    if (!document.getElementById('setModal').hidden){
+      e.stopImmediatePropagation(); settingsClose();
     }
   }, true);
+
+  // ----- BitZero modal -----
+  document.getElementById('bzOpen').addEventListener('click', bzOpenModal);
+  document.getElementById('bzClose').addEventListener('click', bzCloseModal);
+  document.getElementById('bzEstop').addEventListener('click', emergencyStop);
+  document.getElementById('bzStart').addEventListener('click', bzStart);
+  document.getElementById('bzModal').addEventListener('pointerdown', function(e){
+    if (e.target === e.currentTarget && !PROBE.active) bzCloseModal();
+  });
 
   // ----- jog modal -----
   document.getElementById('jogOpen').addEventListener('click', jogModalOpen);
@@ -2901,7 +3030,7 @@ function wireMachine(){
   // ----- profile wiring -----
   profileLoad();
   applyProfileToUI();
-  ['bsEnable','bsX','bsY','bzEnable','bzVersion','spinType','spinupSec','jogFeedXY','jogFeedZ','highStart','travelZIn',
+  ['bsEnable','bsX','bsY','bzEnable','bzVersion','bzThk','spinType','spinupSec','jogFeedXY','jogFeedZ','highStart','travelZIn',
    'envW','envD','originSel','stockThk','rapidRate','checkEnvelope','showEnvelope'].forEach(function(id){
     document.getElementById(id).addEventListener('change', readUIToProfile);
   });
