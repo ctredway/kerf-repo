@@ -27,15 +27,23 @@
   input[type=number]{width:76px}
   select{background:var(--panel-deep);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:5px 8px;font-size:13px;font-family:var(--sans)}
 
-  #app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:64px 1fr;height:100vh}
+  #app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:auto 1fr;height:100vh}
   header{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
   header .brand{font-weight:700;font-size:17px}
   header .brand span{color:var(--amber)}
   header .sub{color:var(--muted);font-size:12.5px}
   header .spacer{flex:1}
 
-  #toolCol{grid-row:2;display:flex;flex-direction:column;gap:6px;padding:10px 10px;background:var(--panel);border-right:1px solid var(--line);align-items:center}
-  #toolCol .sep{height:1px;width:36px;background:var(--line);margin:4px 0}
+  #toolPanel{grid-row:2;width:176px;overflow-y:auto;background:var(--panel);border-right:1px solid var(--line);user-select:none}
+  .tGroup{border-bottom:1px solid var(--line)}
+  .tGroup h4{display:flex;align-items:center;gap:6px;padding:7px 10px;font-size:11px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);cursor:grab}
+  .tGroup h4 .caret{font-size:9px;transition:transform .12s;color:var(--faint)}
+  .tGroup.collapsed h4 .caret{transform:rotate(-90deg)}
+  .tGroup h4 .grip{margin-left:auto;color:var(--faint);font-size:11px;letter-spacing:1px}
+  .tGroup.dragOver{outline:2px dashed var(--amber);outline-offset:-2px}
+  .tGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;padding:2px 8px 10px}
+  .tGroup.collapsed .tGrid{display:none}
+  #toolPanel button.tool{width:100%;height:36px}
 
   #canvasWrap{grid-row:2;grid-column:2;position:relative;min-width:0;min-height:0}
   #cv{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
@@ -65,26 +73,10 @@
       <option value="corner">zero at front-left</option>
       <option value="center">zero at center</option>
     </select>
-    <button id="saveBtn" class="iconBtn" title="Save design as JSON (goes in your repo next to the G-code)"><svg viewBox="0 0 18 18"><path d="M9 2.5 V11 M5.5 8 L9 11.5 L12.5 8"/><path d="M3 12.5 V15 h12 v-2.5"/></svg></button>
-    <button id="loadBtn" class="iconBtn" title="Load a saved design"><svg viewBox="0 0 18 18"><path d="M9 11.5 V3 M5.5 6 L9 2.5 L12.5 6"/><path d="M3 12.5 V15 h12 v-2.5"/></svg></button>
     <input type="file" id="loadFile" accept=".json,application/json" hidden>
   </header>
 
-  <div id="toolCol">
-    <button class="tool active" data-tool="select" title="Select / move (V) — drag to move, arrows nudge 1mm (shift 0.1), Del deletes"><svg viewBox="0 0 18 18"><path d="M4 2 L4 13 L7.2 10.4 L9.2 15 L11.4 14 L9.4 9.6 L13.5 9.2 Z"/></svg></button>
-    <button class="tool" data-tool="line" title="Line (L) — click points; type exact coords anytime"><svg viewBox="0 0 18 18"><line x1="3.5" y1="14.5" x2="14.5" y2="3.5"/><circle cx="3.5" cy="14.5" r="1.4"/><circle cx="14.5" cy="3.5" r="1.4"/></svg></button>
-    <button class="tool" data-tool="rect" title="Rectangle (R) — two corners, or click then type W,H"><svg viewBox="0 0 18 18"><rect x="3" y="4.5" width="12" height="9"/></svg></button>
-    <button class="tool" data-tool="circle" title="Circle (C) — center then radius point, or type D5 for diameter"><svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="6"/></svg></button>
-    <button class="tool" data-tool="poly" title="Polyline (P) — click points, Enter/double-click ends, close by clicking the start"><svg viewBox="0 0 18 18"><path d="M2.5 13.5 L6.5 5.5 L10.5 11 L15.5 3.5"/><circle cx="2.5" cy="13.5" r="1.2"/><circle cx="6.5" cy="5.5" r="1.2"/><circle cx="10.5" cy="11" r="1.2"/><circle cx="15.5" cy="3.5" r="1.2"/></svg></button>
-    <button class="tool" data-tool="arc" title="Arc (A) — center, start, end. Type '10<0' for start at R10 0°, then '90' to sweep 90° CCW (negative = CW)"><svg viewBox="0 0 18 18"><path d="M3.5 14.5 A 11 11 0 0 1 14.5 3.5"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/></svg></button>
-    <div class="sep"></div>
-    <button class="tool" data-tool="guide" title="Offset guide (G) — click an edge, type the offset distance. Guides snap; intersections snap. This is how a hole lands exactly 5mm from an edge."><svg viewBox="0 0 18 18"><line x1="2.5" y1="12" x2="15.5" y2="12" stroke-dasharray="3 2.4"/><line x1="2.5" y1="5" x2="15.5" y2="5"/></svg></button>
-    <button class="tool" id="clearGuides" title="Remove all guides"><svg viewBox="0 0 18 18"><line x1="2.5" y1="9" x2="9.5" y2="9" stroke-dasharray="3 2.4"/><line x1="11.5" y1="6" x2="16" y2="10.5"/><line x1="16" y1="6" x2="11.5" y2="10.5"/></svg></button>
-    <div class="sep"></div>
-    <button class="tool" id="undoBtn" title="Undo (Ctrl+Z)"><svg viewBox="0 0 18 18"><path d="M6.5 4 L3 7.5 L6.5 11"/><path d="M3 7.5 H11 a4 4 0 0 1 0 8 H8"/></svg></button>
-    <button class="tool" id="redoBtn" title="Redo (Ctrl+Y)"><svg viewBox="0 0 18 18"><path d="M11.5 4 L15 7.5 L11.5 11"/><path d="M15 7.5 H7 a4 4 0 0 0 0 8 H10"/></svg></button>
-    <button class="tool" id="fitBtn2" title="Fit stock (F)"><svg viewBox="0 0 18 18"><path d="M3 6.5 V3 h3.5 M11.5 3 H15 v3.5 M15 11.5 V15 h-3.5 M6.5 15 H3 v-3.5"/></svg></button>
-  </div>
+  <div id="toolPanel"></div>
 
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
@@ -326,7 +318,7 @@ function setTool(t){
   TOOL = t; DRAW = null; SEL = [];
   hidePrompt();
   if (t !== 'select') stagePrompt(t + '0');
-  document.querySelectorAll('#toolCol .tool[data-tool]').forEach(function(b){
+  document.querySelectorAll('#toolPanel .tool[data-tool]').forEach(function(b){
     b.classList.toggle('active', b.dataset.tool === t);
   });
   draw();
@@ -912,6 +904,114 @@ function moveEntity(e, dx, dy){
   else if (e.t==='poly'){ e.pts.forEach(function(p){ p[0]+=dx; p[1]+=dy; }); }
 }
 
+/* ---------------- configurable tool panel ----------------
+   Groups render from PANEL_GROUPS in the user's saved order; drag a group
+   header to reorder, click it to collapse. Both persist per-browser. */
+var ICON = {
+ sel:'<svg viewBox="0 0 18 18"><path d="M4 2 L4 13 L7.2 10.4 L9.2 15 L11.4 14 L9.4 9.6 L13.5 9.2 Z"/></svg>',
+ line:'<svg viewBox="0 0 18 18"><line x1="3.5" y1="14.5" x2="14.5" y2="3.5"/><circle cx="3.5" cy="14.5" r="1.4"/><circle cx="14.5" cy="3.5" r="1.4"/></svg>',
+ rect:'<svg viewBox="0 0 18 18"><rect x="3" y="4.5" width="12" height="9"/></svg>',
+ circ:'<svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="6"/></svg>',
+ poly:'<svg viewBox="0 0 18 18"><path d="M2.5 13.5 L6.5 5.5 L10.5 11 L15.5 3.5"/><circle cx="2.5" cy="13.5" r="1.2"/><circle cx="6.5" cy="5.5" r="1.2"/><circle cx="10.5" cy="11" r="1.2"/><circle cx="15.5" cy="3.5" r="1.2"/></svg>',
+ arc:'<svg viewBox="0 0 18 18"><path d="M3.5 14.5 A 11 11 0 0 1 14.5 3.5"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/></svg>',
+ guide:'<svg viewBox="0 0 18 18"><line x1="2.5" y1="12" x2="15.5" y2="12" stroke-dasharray="3 2.4"/><line x1="2.5" y1="5" x2="15.5" y2="5"/></svg>',
+ gclr:'<svg viewBox="0 0 18 18"><line x1="2.5" y1="9" x2="9.5" y2="9" stroke-dasharray="3 2.4"/><line x1="11.5" y1="6" x2="16" y2="10.5"/><line x1="16" y1="6" x2="11.5" y2="10.5"/></svg>',
+ undo:'<svg viewBox="0 0 18 18"><path d="M6.5 4 L3 7.5 L6.5 11"/><path d="M3 7.5 H11 a4 4 0 0 1 0 8 H8"/></svg>',
+ redo:'<svg viewBox="0 0 18 18"><path d="M11.5 4 L15 7.5 L11.5 11"/><path d="M15 7.5 H7 a4 4 0 0 0 0 8 H10"/></svg>',
+ fit:'<svg viewBox="0 0 18 18"><path d="M3 6.5 V3 h3.5 M11.5 3 H15 v3.5 M15 11.5 V15 h-3.5 M6.5 15 H3 v-3.5"/></svg>',
+ save:'<svg viewBox="0 0 18 18"><path d="M9 2.5 V11 M5.5 8 L9 11.5 L12.5 8"/><path d="M3 12.5 V15 h12 v-2.5"/></svg>',
+ load:'<svg viewBox="0 0 18 18"><path d="M9 11.5 V3 M5.5 6 L9 2.5 L12.5 6"/><path d="M3 12.5 V15 h12 v-2.5"/></svg>'
+};
+var PANEL_BTNS = {
+ select:{tool:'select', icon:'sel', title:'Select / move (V) \u2014 drag to move, arrows nudge 1mm (shift 0.1), Del deletes', active:true},
+ line:  {tool:'line', icon:'line', title:'Line (L) \u2014 click points; type exact coords anytime'},
+ rect:  {tool:'rect', icon:'rect', title:'Rectangle (R) \u2014 two corners, or click then type W,H'},
+ circle:{tool:'circle', icon:'circ', title:'Circle (C) \u2014 center then radius point, or type D5 for diameter'},
+ arc:   {tool:'arc', icon:'arc', title:'Arc (A) \u2014 center, start, end. \'10<0\' start at R10 0\u00b0, then \'90\' sweep CCW (negative = CW)'},
+ poly:  {tool:'poly', icon:'poly', title:'Polyline (P) \u2014 click points, Enter ends, click start to close'},
+ guide: {tool:'guide', icon:'guide', title:'Offset guide (G) \u2014 click an edge, type the offset. Guides and their intersections snap.'},
+ clearGuides:{id:'clearGuides', icon:'gclr', title:'Remove all guides'},
+ undoBtn:{id:'undoBtn', icon:'undo', title:'Undo (Ctrl+Z)'},
+ redoBtn:{id:'redoBtn', icon:'redo', title:'Redo (Ctrl+Y)'},
+ fitBtn2:{id:'fitBtn2', icon:'fit', title:'Fit stock (F)'},
+ saveBtn:{id:'saveBtn', icon:'save', title:'Save design as JSON (goes in your repo next to the G-code)'},
+ loadBtn:{id:'loadBtn', icon:'load', title:'Load a saved design'}
+};
+var PANEL_GROUPS = [
+ {id:'file',   label:'File',           btns:['saveBtn','loadBtn']},
+ {id:'create', label:'Create Vectors', btns:['select','line','rect','circle','arc','poly']},
+ {id:'guides', label:'Guides',         btns:['guide','clearGuides']},
+ {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']}
+ /* D1.2 adds: {id:'edit', label:'Edit Vectors', btns:['fillet','trim','extend','offset',...]} */
+];
+var UICFG = {order:null, collapsed:{}};
+function uiCfgLoad(){
+  try{
+    var c = JSON.parse(localStorage.getItem('kerfDesignUI') || 'null');
+    if (c){ UICFG.order = c.order || null; UICFG.collapsed = c.collapsed || {}; }
+  }catch(e){}
+}
+function uiCfgSave(){
+  try{ localStorage.setItem('kerfDesignUI', JSON.stringify(UICFG)); }catch(e){}
+}
+function orderedGroups(){
+  if (!UICFG.order) return PANEL_GROUPS.slice();
+  var byId = {}; PANEL_GROUPS.forEach(function(g){ byId[g.id] = g; });
+  var out = [];
+  UICFG.order.forEach(function(id){ if (byId[id]){ out.push(byId[id]); delete byId[id]; } });
+  PANEL_GROUPS.forEach(function(g){ if (byId[g.id]) out.push(g); }); // new groups append
+  return out;
+}
+function buildToolPanel(){
+  var host = document.getElementById('toolPanel');
+  var html = '';
+  orderedGroups().forEach(function(g){
+    html += '<div class="tGroup' + (UICFG.collapsed[g.id] ? ' collapsed' : '') + '" data-group="' + g.id + '">' +
+            '<h4 draggable="true"><span class="caret">\u25bc</span>' + g.label + '<span class="grip">\u22ee\u22ee</span></h4><div class="tGrid">';
+    g.btns.forEach(function(bid){
+      var b = PANEL_BTNS[bid];
+      if (!b) return;
+      html += '<button class="tool' + (b.active ? ' active' : '') + '"' +
+              (b.tool ? ' data-tool="' + b.tool + '"' : '') +
+              (b.id ? ' id="' + b.id + '"' : '') +
+              ' title="' + b.title + '">' + ICON[b.icon] + '</button>';
+    });
+    html += '</div></div>';
+  });
+  host.innerHTML = html;
+
+  // collapse on header click; drag headers to reorder groups
+  var dragging = null;
+  host.querySelectorAll('.tGroup h4').forEach(function(h){
+    var grp = h.parentElement;
+    h.addEventListener('click', function(){
+      var id = grp.dataset.group;
+      UICFG.collapsed[id] = !UICFG.collapsed[id];
+      grp.classList.toggle('collapsed', UICFG.collapsed[id]);
+      uiCfgSave();
+    });
+    h.addEventListener('dragstart', function(e){
+      dragging = grp.dataset.group;
+      e.dataTransfer.effectAllowed = 'move';
+    });
+  });
+  host.querySelectorAll('.tGroup').forEach(function(grp){
+    grp.addEventListener('dragover', function(e){ e.preventDefault(); grp.classList.add('dragOver'); });
+    grp.addEventListener('dragleave', function(){ grp.classList.remove('dragOver'); });
+    grp.addEventListener('drop', function(e){
+      e.preventDefault(); grp.classList.remove('dragOver');
+      if (!dragging || dragging === grp.dataset.group) return;
+      var order = orderedGroups().map(function(g){ return g.id; });
+      order.splice(order.indexOf(dragging), 1);
+      order.splice(order.indexOf(grp.dataset.group), 0, dragging);
+      UICFG.order = order;
+      uiCfgSave();
+      buildToolPanel();     // rebuild in the new order
+      wirePanel();          // re-attach button handlers
+    });
+  });
+}
+
 /* ---------------- wiring ---------------- */
 function fit(){
   var sr = stockRect();
@@ -925,13 +1025,9 @@ function fit(){
   draw();
 }
 
-function wire(){
-  cv = document.getElementById('cv');
-  ctx = cv.getContext('2d');
-  restore();
-  fit();
-
-  document.querySelectorAll('#toolCol .tool[data-tool]').forEach(function(b){
+function wirePanel(){
+  document.querySelectorAll('#toolPanel .tool[data-tool]').forEach(function(b){
+    b.classList.toggle('active', b.dataset.tool === TOOL);
     b.addEventListener('click', function(){ setTool(b.dataset.tool); });
   });
   document.getElementById('clearGuides').addEventListener('click', function(){
@@ -941,17 +1037,6 @@ function wire(){
   document.getElementById('undoBtn').addEventListener('click', doUndo);
   document.getElementById('redoBtn').addEventListener('click', doRedo);
   document.getElementById('fitBtn2').addEventListener('click', fit);
-
-  ['stkW','stkH','stkOrigin'].forEach(function(id){
-    document.getElementById(id).addEventListener('change', function(){
-      DOC.stock.w = parseFloat(document.getElementById('stkW').value) || 200;
-      DOC.stock.h = parseFloat(document.getElementById('stkH').value) || 120;
-      DOC.stock.origin = document.getElementById('stkOrigin').value;
-      persist(); fit();
-    });
-  });
-
-  // save / load
   document.getElementById('saveBtn').addEventListener('click', function(){
     var blob = new Blob([JSON.stringify(DOC, null, 1)], {type:'application/json'});
     var a = document.createElement('a');
@@ -962,6 +1047,26 @@ function wire(){
   document.getElementById('loadBtn').addEventListener('click', function(){
     document.getElementById('loadFile').click();
   });
+}
+
+function wire(){
+  cv = document.getElementById('cv');
+  ctx = cv.getContext('2d');
+  restore();
+  uiCfgLoad();
+  buildToolPanel();
+  wirePanel();
+  fit();
+
+  ['stkW','stkH','stkOrigin'].forEach(function(id){
+    document.getElementById(id).addEventListener('change', function(){
+      DOC.stock.w = parseFloat(document.getElementById('stkW').value) || 200;
+      DOC.stock.h = parseFloat(document.getElementById('stkH').value) || 120;
+      DOC.stock.origin = document.getElementById('stkOrigin').value;
+      persist(); fit();
+    });
+  });
+
   document.getElementById('loadFile').addEventListener('change', function(e){
     var f = e.target.files[0]; if (!f) return;
     var rd = new FileReader();
