@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kerf Design · precision 2D sketcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14181d; --panel:#1d232b; --panel-deep:#171c22; --line:#2a323c;
+    --ink:#dce3ea; --muted:#8794a1; --faint:#5a6673;
+    --amber:#e8a33d; --err:#e06c5a; --ok:#7fb069; --info:#6fa8dc;
+    --mono:'JetBrains Mono',monospace; --sans:'Archivo',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px}
+  button{font-family:var(--sans);cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:4px;padding:6px 12px;font-size:13px}
+  button:hover{border-color:var(--faint)}
+  button.primary{background:var(--amber);border-color:var(--amber);color:#1a1407;font-weight:600}
+  button.tool{width:44px;height:40px;font-family:var(--mono);font-size:12px;padding:0}
+  button.tool.active{background:var(--amber);border-color:var(--amber);color:#1a1407;font-weight:700}
+  button.tool svg,.iconBtn svg{display:block;margin:0 auto;width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+  .iconBtn{padding:6px 9px;line-height:0}
+  input{background:var(--panel-deep);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:5px 8px;font-size:13px;font-family:var(--mono)}
+  input[type=number]{width:76px}
+  select{background:var(--panel-deep);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:5px 8px;font-size:13px;font-family:var(--sans)}
+
+  #app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:64px 1fr;height:100vh}
+  header{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+  header .brand{font-weight:700;font-size:17px}
+  header .brand span{color:var(--amber)}
+  header .sub{color:var(--muted);font-size:12.5px}
+  header .spacer{flex:1}
+
+  #toolCol{grid-row:2;display:flex;flex-direction:column;gap:6px;padding:10px 10px;background:var(--panel);border-right:1px solid var(--line);align-items:center}
+  #toolCol .sep{height:1px;width:36px;background:var(--line);margin:4px 0}
+
+  #canvasWrap{grid-row:2;grid-column:2;position:relative;min-width:0;min-height:0}
+  #cv{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
+
+  #promptBar{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;display:none;align-items:center;gap:8px;background:rgba(23,28,34,.95);border:1px solid var(--amber);border-radius:6px;padding:8px 12px;z-index:5}
+  #promptBar.on{display:flex}
+  #promptBar label{color:var(--muted);font-size:12.5px}
+  #promptBar input{width:170px}
+  #promptHint{position:absolute;left:50%;transform:translateX(-50%);bottom:60px;color:var(--faint);font-size:12px;z-index:5;background:rgba(20,24,29,.8);padding:3px 10px;border-radius:4px;display:none}
+  #promptHint.on{display:block}
+
+  footer{grid-column:1/3;display:flex;align-items:center;gap:16px;padding:8px 16px;background:var(--panel);border-top:1px solid var(--line);font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+  footer b{color:var(--ink);font-weight:500}
+  #hint{color:var(--faint);font-family:var(--sans)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">Kerf<span> Design</span></div>
+    <div class="sub">precision 2D sketcher — v0.1</div>
+    <div class="spacer"></div>
+    <label style="color:var(--muted);font-size:12.5px">Stock</label>
+    <input type="number" id="stkW" value="200" step="1" title="Stock width, mm"> ×
+    <input type="number" id="stkH" value="120" step="1" title="Stock height, mm"> mm
+    <select id="stkOrigin" title="Where X0 Y0 sits — match your Kerf job zero">
+      <option value="corner">zero at front-left</option>
+      <option value="center">zero at center</option>
+    </select>
+    <button id="saveBtn" class="iconBtn" title="Save design as JSON (goes in your repo next to the G-code)"><svg viewBox="0 0 18 18"><path d="M9 2.5 V11 M5.5 8 L9 11.5 L12.5 8"/><path d="M3 12.5 V15 h12 v-2.5"/></svg></button>
+    <button id="loadBtn" class="iconBtn" title="Load a saved design"><svg viewBox="0 0 18 18"><path d="M9 11.5 V3 M5.5 6 L9 2.5 L12.5 6"/><path d="M3 12.5 V15 h12 v-2.5"/></svg></button>
+    <input type="file" id="loadFile" accept=".json,application/json" hidden>
+  </header>
+
+  <div id="toolCol">
+    <button class="tool active" data-tool="select" title="Select / move (V) — drag to move, arrows nudge 1mm (shift 0.1), Del deletes"><svg viewBox="0 0 18 18"><path d="M4 2 L4 13 L7.2 10.4 L9.2 15 L11.4 14 L9.4 9.6 L13.5 9.2 Z"/></svg></button>
+    <button class="tool" data-tool="line" title="Line (L) — click points; type exact coords anytime"><svg viewBox="0 0 18 18"><line x1="3.5" y1="14.5" x2="14.5" y2="3.5"/><circle cx="3.5" cy="14.5" r="1.4"/><circle cx="14.5" cy="3.5" r="1.4"/></svg></button>
+    <button class="tool" data-tool="rect" title="Rectangle (R) — two corners, or click then type W,H"><svg viewBox="0 0 18 18"><rect x="3" y="4.5" width="12" height="9"/></svg></button>
+    <button class="tool" data-tool="circle" title="Circle (C) — center then radius point, or type D5 for diameter"><svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="6"/></svg></button>
+    <button class="tool" data-tool="poly" title="Polyline (P) — click points, Enter/double-click ends, close by clicking the start"><svg viewBox="0 0 18 18"><path d="M2.5 13.5 L6.5 5.5 L10.5 11 L15.5 3.5"/><circle cx="2.5" cy="13.5" r="1.2"/><circle cx="6.5" cy="5.5" r="1.2"/><circle cx="10.5" cy="11" r="1.2"/><circle cx="15.5" cy="3.5" r="1.2"/></svg></button>
+    <button class="tool" data-tool="arc" title="Arc (A) — center, start, end. Type '10<0' for start at R10 0°, then '90' to sweep 90° CCW (negative = CW)"><svg viewBox="0 0 18 18"><path d="M3.5 14.5 A 11 11 0 0 1 14.5 3.5"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/></svg></button>
+    <div class="sep"></div>
+    <button class="tool" data-tool="guide" title="Offset guide (G) — click an edge, type the offset distance. Guides snap; intersections snap. This is how a hole lands exactly 5mm from an edge."><svg viewBox="0 0 18 18"><line x1="2.5" y1="12" x2="15.5" y2="12" stroke-dasharray="3 2.4"/><line x1="2.5" y1="5" x2="15.5" y2="5"/></svg></button>
+    <button class="tool" id="clearGuides" title="Remove all guides"><svg viewBox="0 0 18 18"><line x1="2.5" y1="9" x2="9.5" y2="9" stroke-dasharray="3 2.4"/><line x1="11.5" y1="6" x2="16" y2="10.5"/><line x1="16" y1="6" x2="11.5" y2="10.5"/></svg></button>
+    <div class="sep"></div>
+    <button class="tool" id="undoBtn" title="Undo (Ctrl+Z)"><svg viewBox="0 0 18 18"><path d="M6.5 4 L3 7.5 L6.5 11"/><path d="M3 7.5 H11 a4 4 0 0 1 0 8 H8"/></svg></button>
+    <button class="tool" id="redoBtn" title="Redo (Ctrl+Y)"><svg viewBox="0 0 18 18"><path d="M11.5 4 L15 7.5 L11.5 11"/><path d="M15 7.5 H7 a4 4 0 0 0 0 8 H10"/></svg></button>
+    <button class="tool" id="fitBtn2" title="Fit stock (F)"><svg viewBox="0 0 18 18"><path d="M3 6.5 V3 h3.5 M11.5 3 H15 v3.5 M15 11.5 V15 h-3.5 M6.5 15 H3 v-3.5"/></svg></button>
+  </div>
+
+  <div id="canvasWrap">
+    <canvas id="cv"></canvas>
+    <div id="promptHint"></div>
+    <div id="promptBar">
+      <label id="promptLbl">value</label>
+      <input id="promptIn" autocomplete="off" spellcheck="false">
+    </div>
+  </div>
+
+  <footer>
+    <span>X <b id="fx">0.00</b></span>
+    <span>Y <b id="fy">0.00</b></span>
+    <span id="fdim"></span>
+    <span class="spacer" style="flex:1"></span>
+    <span id="hint">Type numbers while drawing: "50,30" absolute · "@10,0" relative · "D5" circle diameter · click an edge with Guide then type the offset</span>
+  </footer>
+</div>
+
+<script>
+'use strict';
+/* ============================================================
+   Kerf Design v0.1 — geometry model
+   Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
+             {t:'rect',x,y,w,h}   {t:'poly',pts:[[x,y],...],closed}
+   Guides:   {t:'gline',a,b,c}  (ax+by=c, normalized)  — construction only
+   All units mm. Y up. Screen transform flips Y.
+   ============================================================ */
+var DOC = {stock:{w:200,h:120,origin:'corner'}, ents:[], guides:[]};
+var VIEW = {scale:3, ox:0, oy:0}; // screen px per mm; ox/oy = screen pos of (0,0)
+var UNDO = [], REDO = [];
+var TOOL = 'select';
+var DRAW = null;       // in-progress tool state
+var SEL = [];          // selected entity indices, in selection order (first = reference)
+var MOUSE = {x:0,y:0,mx:0,my:0,snap:null};
+var cv, ctx;
+
+/* ---------------- transforms ---------------- */
+function s2w(px,py){ return {x:(px - VIEW.ox)/VIEW.scale, y:(VIEW.oy - py)/VIEW.scale}; }
+function w2s(x,y){ return {x: VIEW.ox + x*VIEW.scale, y: VIEW.oy - y*VIEW.scale}; }
+
+/* ---------------- stock bounds ---------------- */
+function stockRect(){
+  var st = DOC.stock;
+  var x0 = st.origin === 'center' ? -st.w/2 : 0;
+  var y0 = st.origin === 'center' ? -st.h/2 : 0;
+  return {x0:x0, y0:y0, x1:x0+st.w, y1:y0+st.h};
+}
+
+/* ---------------- snapping ---------------- */
+function snapPoints(){
+  var pts = [];
+  var sr = stockRect();
+  pts.push({x:sr.x0,y:sr.y0,k:'corner'},{x:sr.x1,y:sr.y0,k:'corner'},
+           {x:sr.x1,y:sr.y1,k:'corner'},{x:sr.x0,y:sr.y1,k:'corner'});
+  DOC.ents.forEach(function(e){
+    if (e.t==='line'){ pts.push({x:e.x1,y:e.y1,k:'end'},{x:e.x2,y:e.y2,k:'end'},
+                                {x:(e.x1+e.x2)/2,y:(e.y1+e.y2)/2,k:'mid'}); }
+    else if (e.t==='circle'){ pts.push({x:e.cx,y:e.cy,k:'center'}); }
+    else if (e.t==='rect'){
+      pts.push({x:e.x,y:e.y,k:'end'},{x:e.x+e.w,y:e.y,k:'end'},
+               {x:e.x+e.w,y:e.y+e.h,k:'end'},{x:e.x,y:e.y+e.h,k:'end'},
+               {x:e.x+e.w/2,y:e.y+e.h/2,k:'center'});
+    }
+    else if (e.t==='poly'){ e.pts.forEach(function(p){ pts.push({x:p[0],y:p[1],k:'end'}); }); }
+    else if (e.t==='arc'){
+      var ae = arcEnds(e);
+      pts.push({x:ae[0].x,y:ae[0].y,k:'end'},{x:ae[1].x,y:ae[1].y,k:'end'},{x:e.cx,y:e.cy,k:'center'});
+    }
+  });
+  // guide-guide intersections
+  for (var i=0;i<DOC.guides.length;i++)
+    for (var j=i+1;j<DOC.guides.length;j++){
+      var p = guideX(DOC.guides[i], DOC.guides[j]);
+      if (p) pts.push({x:p.x,y:p.y,k:'guideX'});
+    }
+  return pts;
+}
+function guideX(g1,g2){
+  var d = g1.a*g2.b - g2.a*g1.b;
+  if (Math.abs(d) < 1e-9) return null;
+  return {x:(g1.c*g2.b - g2.c*g1.b)/d, y:(g1.a*g2.c - g2.a*g1.c)/d};
+}
+function angTo(cx, cy, p){ return Math.atan2(p.y-cy, p.x-cx); }
+function e0mid(e){
+  var half = arcSweep(e)/2;
+  var a = e.ccw ? e.a0 + half : e.a0 - half;
+  return {x:e.cx + e.r*Math.cos(a), y:e.cy + e.r*Math.sin(a)};
+}
+function arcEnds(e){
+  return [{x:e.cx + e.r*Math.cos(e.a0), y:e.cy + e.r*Math.sin(e.a0)},
+          {x:e.cx + e.r*Math.cos(e.a1), y:e.cy + e.r*Math.sin(e.a1)}];
+}
+function arcSweep(e){ // sweep along stored direction, 0..2pi
+  var d = e.ccw ? (e.a1 - e.a0) : (e.a0 - e.a1);
+  d = d % (2*Math.PI); if (d < 0) d += 2*Math.PI;
+  return d || 2*Math.PI * 0; // zero stays zero
+}
+function arcInSpan(e, ang){
+  var rel = e.ccw ? (ang - e.a0) : (e.a0 - ang);
+  rel = rel % (2*Math.PI); if (rel < 0) rel += 2*Math.PI;
+  return rel <= arcSweep(e) + 1e-9;
+}
+function arcHitDist(e, w){
+  var ang = angTo(e.cx, e.cy, w);
+  if (arcInSpan(e, ang)) return Math.abs(Math.hypot(w.x-e.cx, w.y-e.cy) - e.r);
+  var ends = arcEnds(e);
+  return Math.min(Math.hypot(w.x-ends[0].x, w.y-ends[0].y),
+                  Math.hypot(w.x-ends[1].x, w.y-ends[1].y));
+}
+function guideSnap(w){ // nearest point on any guide within tolerance
+  var best = null, tol = 8/VIEW.scale;
+  DOC.guides.forEach(function(g){
+    var d = g.a*w.x + g.b*w.y - g.c;           // signed distance (a,b normalized)
+    if (Math.abs(d) < tol){
+      var p = {x:w.x - g.a*d, y:w.y - g.b*d};
+      var dd = Math.abs(d);
+      if (!best || dd < best.d) best = {x:p.x, y:p.y, d:dd, k:'guide'};
+    }
+  });
+  return best;
+}
+function resolveSnap(w){
+  var tol = 9/VIEW.scale;
+  var best = null;
+  snapPoints().forEach(function(p){
+    var d = Math.hypot(p.x-w.x, p.y-w.y);
+    if (d < tol && (!best || d < best.d)) best = {x:p.x,y:p.y,d:d,k:p.k};
+  });
+  if (best) return best;
+  var g = guideSnap(w);
+  if (g) return g;
+  // grid snap 1mm (0.5 when zoomed in past 8 px/mm)
+  var step = VIEW.scale > 8 ? 0.5 : 1;
+  return {x:Math.round(w.x/step)*step, y:Math.round(w.y/step)*step, k:'grid'};
+}
+
+/* ---------------- entity edges (for guide picking + hit test) ---------------- */
+function entityEdges(e){
+  var out = [];
+  if (e.t==='line') out.push([e.x1,e.y1,e.x2,e.y2]);
+  else if (e.t==='rect'){
+    out.push([e.x,e.y, e.x+e.w,e.y], [e.x+e.w,e.y, e.x+e.w,e.y+e.h],
+             [e.x+e.w,e.y+e.h, e.x,e.y+e.h], [e.x,e.y+e.h, e.x,e.y]);
+  }
+  else if (e.t==='poly'){
+    for (var i=0;i<e.pts.length-1;i++) out.push([e.pts[i][0],e.pts[i][1],e.pts[i+1][0],e.pts[i+1][1]]);
+    if (e.closed && e.pts.length>2){
+      var l=e.pts[e.pts.length-1], f=e.pts[0];
+      out.push([l[0],l[1],f[0],f[1]]);
+    }
+  }
+  return out;
+}
+function allEdges(){
+  var out = [];
+  var sr = stockRect();
+  [[sr.x0,sr.y0,sr.x1,sr.y0],[sr.x1,sr.y0,sr.x1,sr.y1],
+   [sr.x1,sr.y1,sr.x0,sr.y1],[sr.x0,sr.y1,sr.x0,sr.y0]].forEach(function(ed){ out.push({ed:ed, ent:-1}); });
+  DOC.ents.forEach(function(e,i){ entityEdges(e).forEach(function(ed){ out.push({ed:ed, ent:i}); }); });
+  return out;
+}
+function distToSeg(px,py, x1,y1,x2,y2){
+  var dx=x2-x1, dy=y2-y1, L2=dx*dx+dy*dy;
+  var t = L2 ? Math.max(0, Math.min(1, ((px-x1)*dx + (py-y1)*dy)/L2)) : 0;
+  return Math.hypot(px-(x1+dx*t), py-(y1+dy*t));
+}
+function pickEdge(w){
+  var tol = 8/VIEW.scale, best = null;
+  allEdges().forEach(function(o){
+    var d = distToSeg(w.x,w.y, o.ed[0],o.ed[1],o.ed[2],o.ed[3]);
+    if (d < tol && (!best || d < best.d)) best = {d:d, ed:o.ed, ent:o.ent};
+  });
+  return best;
+}
+function pickEntity(w){
+  var tol = 7/VIEW.scale, best = null;
+  DOC.ents.forEach(function(e,i){
+    var d = 1e9;
+    if (e.t==='circle') d = Math.abs(Math.hypot(w.x-e.cx, w.y-e.cy) - e.r);
+    else if (e.t==='arc') d = arcHitDist(e, w);
+    else entityEdges(e).forEach(function(ed){ d = Math.min(d, distToSeg(w.x,w.y, ed[0],ed[1],ed[2],ed[3])); });
+    if (d < tol && (!best || d < best.d)) best = {i:i, d:d};
+  });
+  return best ? best.i : null;
+}
+
+/* ---------------- undo ---------------- */
+function pushUndo(){ UNDO.push(JSON.stringify({ents:DOC.ents, guides:DOC.guides})); if (UNDO.length>200) UNDO.shift(); REDO = []; }
+function doUndo(){ if (!UNDO.length) return; REDO.push(JSON.stringify({ents:DOC.ents,guides:DOC.guides})); var s=JSON.parse(UNDO.pop()); DOC.ents=s.ents; DOC.guides=s.guides; SEL=[]; draw(); persist(); }
+function doRedo(){ if (!REDO.length) return; UNDO.push(JSON.stringify({ents:DOC.ents,guides:DOC.guides})); var s=JSON.parse(REDO.pop()); DOC.ents=s.ents; DOC.guides=s.guides; SEL=[]; draw(); persist(); }
+
+/* ---------------- numeric entry parsing ---------------- */
+/* Accepted while a point is expected:
+   "50,30"   absolute point
+   "@10,0"   relative to previous point (or to first point of the op)
+   "D5" / "d5"  circle diameter (circle tool, radius stage)
+   "R2.5"    circle radius
+   plain "12" during guide offset = distance (sign flips side: negative = other side)
+   rect second stage: "120,80" = W,H relative to first corner (positive right/up) */
+function parseNumericPoint(str, ref){
+  str = str.trim();
+  var rel = false;
+  if (str[0] === '@'){ rel = true; str = str.slice(1); }
+  var pol = str.split('<');
+  if (pol.length === 2 && ref){
+    var len = parseFloat(pol[0]), ang = parseFloat(pol[1]) * Math.PI / 180;
+    if (!isNaN(len) && !isNaN(ang))
+      return {x: ref.x + len*Math.cos(ang), y: ref.y + len*Math.sin(ang)};
+    return null;
+  }
+  var m = str.split(',');
+  if (m.length !== 2) return null;
+  var a = parseFloat(m[0]), b = parseFloat(m[1]);
+  if (isNaN(a) || isNaN(b)) return null;
+  if (rel && ref) return {x:ref.x + a, y:ref.y + b};
+  if (rel) return null;
+  return {x:a, y:b};
+}
+
+/* ---------------- tool state machine ---------------- */
+var STAGE_LABEL = {
+  line0:  'Line \u2014 click first point, or type "x,y"',
+  line1:  'Line \u2014 next point: "x,y" abs \u00b7 "@dx,dy" rel \u00b7 "50<45" length<angle\u00b0',
+  rect0:  'Rect \u2014 click first corner, or type "x,y"',
+  rect1:  'Rect \u2014 opposite corner, or type "W,H" e.g. "120,80"',
+  circle0:'Circle \u2014 click center, or type "x,y"',
+  circle1:'Circle \u2014 click radius point, or type "D5" / "R2.5"',
+  poly0:  'Polyline \u2014 click first point, or type "x,y"',
+  poly1:  'Polyline \u2014 next point ("@dx,dy" / "50<45" ok) \u00b7 Enter finishes \u00b7 click start closes',
+  arc0:   'Arc \u2014 click center, or type "x,y"',
+  arc1:   'Arc \u2014 click start point, or type "10<0" (radius 10 at 0\u00b0) / "x,y"',
+  arc2:   'Arc \u2014 click end point (CCW), or type sweep\u00b0: "90" CCW, "-90" CW',
+  guide0: 'Guide \u2014 click an edge (stock or drawing) to offset from',
+  guideOffset: 'Guide \u2014 offset from that edge in mm (negative = other side)'
+};
+function stagePrompt(key){ showPrompt(STAGE_LABEL[key] || '', ''); }
+function setTool(t){
+  TOOL = t; DRAW = null; SEL = [];
+  hidePrompt();
+  if (t !== 'select') stagePrompt(t + '0');
+  document.querySelectorAll('#toolCol .tool[data-tool]').forEach(function(b){
+    b.classList.toggle('active', b.dataset.tool === t);
+  });
+  draw();
+}
+function toolClick(w, snap){
+  var p = snap;
+  if (TOOL === 'line'){
+    if (!DRAW){ DRAW = {stage:1, x:p.x, y:p.y}; stagePrompt('line1'); }
+    else { pushUndo(); DOC.ents.push({t:'line',x1:DRAW.x,y1:DRAW.y,x2:p.x,y2:p.y}); DRAW = {stage:1,x:p.x,y:p.y}; persist(); }
+  }
+  else if (TOOL === 'rect'){
+    if (!DRAW){ DRAW = {stage:1, x:p.x, y:p.y}; stagePrompt('rect1'); }
+    else {
+      pushUndo();
+      DOC.ents.push({t:'rect', x:Math.min(DRAW.x,p.x), y:Math.min(DRAW.y,p.y),
+                     w:Math.abs(p.x-DRAW.x), h:Math.abs(p.y-DRAW.y)});
+      DRAW = null; stagePrompt('rect0'); persist();
+    }
+  }
+  else if (TOOL === 'circle'){
+    if (!DRAW){ DRAW = {stage:1, x:p.x, y:p.y}; stagePrompt('circle1'); }
+    else {
+      pushUndo();
+      DOC.ents.push({t:'circle', cx:DRAW.x, cy:DRAW.y, r:Math.hypot(p.x-DRAW.x, p.y-DRAW.y)});
+      DRAW = null; stagePrompt('circle0'); persist();
+    }
+  }
+  else if (TOOL === 'poly'){
+    if (!DRAW){ DRAW = {stage:1, pts:[[p.x,p.y]]}; stagePrompt('poly1'); }
+    else {
+      var f = DRAW.pts[0];
+      if (DRAW.pts.length > 2 && Math.hypot(p.x-f[0], p.y-f[1]) < 6/VIEW.scale){
+        pushUndo(); DOC.ents.push({t:'poly', pts:DRAW.pts, closed:true}); DRAW=null; stagePrompt('poly0'); persist();
+      } else DRAW.pts.push([p.x,p.y]);
+    }
+  }
+  else if (TOOL === 'arc'){
+    if (!DRAW){ DRAW = {stage:1, cx:p.x, cy:p.y}; stagePrompt('arc1'); }
+    else if (DRAW.stage === 1){
+      DRAW.r = Math.hypot(p.x-DRAW.cx, p.y-DRAW.cy);
+      if (DRAW.r > 1e-6){ DRAW.a0 = angTo(DRAW.cx, DRAW.cy, p); DRAW.stage = 2; stagePrompt('arc2'); }
+    }
+    else {
+      var a1 = angTo(DRAW.cx, DRAW.cy, p);
+      pushUndo();
+      DOC.ents.push({t:'arc', cx:DRAW.cx, cy:DRAW.cy, r:DRAW.r, a0:DRAW.a0, a1:a1, ccw:true});
+      DRAW = null; stagePrompt('arc0'); persist();
+    }
+  }
+  else if (TOOL === 'guide'){
+    var e = pickEdge(w);
+    if (e){
+      var dx = e.ed[2]-e.ed[0], dy = e.ed[3]-e.ed[1];
+      var L = Math.hypot(dx,dy) || 1;
+      // normal (a,b), line: a x + b y = c
+      var a = -dy/L, b = dx/L;
+      var c = a*e.ed[0] + b*e.ed[1];
+      DRAW = {stage:'guideOffset', a:a, b:b, c:c, from:e.ed};
+      stagePrompt('guideOffset');
+      document.getElementById('promptIn').focus();
+    } else stagePrompt('guide0');
+  }
+  else if (TOOL === 'select'){
+    var hit = pickEntity(w);
+    if (MOUSE.shift){
+      if (hit !== null) selToggle(hit);
+    } else {
+      SEL = hit !== null ? [hit] : [];
+    }
+    if (hit !== null && SEL.indexOf(hit) >= 0)
+      DRAW = {stage:'drag', lx:p.x, ly:p.y, moved:false, pushed:false};
+  }
+  draw();
+}
+function toolCommitText(txt){
+  if (DRAW && DRAW.stage === 'dimEdit2'){
+    var ea = DOC.ents[DRAW.a], eb = DOC.ents[DRAW.b];
+    if (!ea || !eb){ DRAW = null; hidePrompt(); return; }
+    var vv = parseFloat(txt);
+    if (isNaN(vv) || vv <= 0) return;
+    pushUndo();
+    if (relApply(ea, eb, vv)){ DRAW = null; hidePrompt(); persist(); draw(); updateReadout(); }
+    else UNDO.pop();
+    return;
+  }
+  if (DRAW && DRAW.stage === 'dimEdit'){
+    var ent = DOC.ents[DRAW.ent];
+    if (!ent){ DRAW = null; hidePrompt(); return; }
+    txt = txt.trim();
+    if (ent.t === 'line'){
+      var pol = txt.split('<');
+      var len = parseFloat(pol[0]);
+      if (isNaN(len) || len <= 0) return;
+      var dx = ent.x2-ent.x1, dy = ent.y2-ent.y1;
+      var ang = pol.length === 2 ? parseFloat(pol[1])*Math.PI/180 : Math.atan2(dy,dx);
+      if (isNaN(ang)) return;
+      pushUndo();
+      ent.x2 = ent.x1 + len*Math.cos(ang);
+      ent.y2 = ent.y1 + len*Math.sin(ang);
+    } else if (ent.t === 'circle'){
+      var mc = txt.match(/^([DdRr])?\s*([0-9.]+)$/);
+      if (!mc) return;
+      var v = parseFloat(mc[2]);
+      if (isNaN(v) || v <= 0) return;
+      pushUndo();
+      ent.r = (mc[1] && mc[1].toUpperCase() === 'R') ? v : v/2; // bare number = diameter
+    } else if (ent.t === 'arc'){
+      var va = parseFloat(txt.replace(/^[Rr]\s*/, ''));
+      if (isNaN(va) || va <= 0) return;
+      pushUndo();
+      ent.r = va;
+    } else if (ent.t === 'rect'){
+      var mr = txt.split(',');
+      if (mr.length !== 2) return;
+      var wv = parseFloat(mr[0]), hv = parseFloat(mr[1]);
+      if (isNaN(wv) || isNaN(hv) || wv <= 0 || hv <= 0) return;
+      pushUndo();
+      ent.w = wv; ent.h = hv;
+    } else { DRAW = null; hidePrompt(); return; }
+    DRAW = null; hidePrompt(); persist(); draw(); updateReadout();
+    return;
+  }
+  if (TOOL === 'poly' && DRAW && DRAW.pts){
+    if (txt.trim() === ''){ // Enter with nothing typed = finish open polyline
+      if (DRAW.pts.length > 1){ pushUndo(); DOC.ents.push({t:'poly', pts:DRAW.pts, closed:false}); DRAW=null; stagePrompt('poly0'); persist(); draw(); }
+      return;
+    }
+    var last = DRAW.pts[DRAW.pts.length-1];
+    var pv = parseNumericPoint(txt, {x:last[0], y:last[1]});
+    if (pv){ DRAW.pts.push([pv.x, pv.y]); draw(); }
+    return;
+  }
+  if (TOOL === 'arc'){
+    if (!DRAW){
+      var pa = parseNumericPoint(txt, null);
+      if (pa){ DRAW = {stage:1, cx:pa.x, cy:pa.y}; stagePrompt('arc1'); draw(); }
+      return;
+    }
+    if (DRAW.stage === 1){
+      var ps = parseNumericPoint(txt, {x:DRAW.cx, y:DRAW.cy}); // "10<0" lands at R10 0° from center
+      if (ps){
+        DRAW.r = Math.hypot(ps.x-DRAW.cx, ps.y-DRAW.cy);
+        if (DRAW.r > 1e-6){ DRAW.a0 = angTo(DRAW.cx, DRAW.cy, ps); DRAW.stage = 2; stagePrompt('arc2'); draw(); }
+      }
+      return;
+    }
+    if (DRAW.stage === 2){
+      var pe = parseNumericPoint(txt, {x:DRAW.cx, y:DRAW.cy});
+      if (pe){
+        pushUndo();
+        DOC.ents.push({t:'arc', cx:DRAW.cx, cy:DRAW.cy, r:DRAW.r, a0:DRAW.a0,
+                       a1:angTo(DRAW.cx, DRAW.cy, pe), ccw:true});
+        DRAW = null; stagePrompt('arc0'); persist(); draw();
+        return;
+      }
+      var sw = parseFloat(txt);
+      if (!isNaN(sw) && Math.abs(sw) > 1e-6){
+        pushUndo();
+        var rad = Math.abs(sw)*Math.PI/180;
+        var ccw = sw > 0;
+        DOC.ents.push({t:'arc', cx:DRAW.cx, cy:DRAW.cy, r:DRAW.r, a0:DRAW.a0,
+                       a1:DRAW.a0 + (ccw ? rad : -rad), ccw:ccw});
+        DRAW = null; stagePrompt('arc0'); persist(); draw();
+      }
+      return;
+    }
+  }
+  if (TOOL === 'guide' && DRAW && DRAW.stage === 'guideOffset'){
+    var d = parseFloat(txt);
+    if (isNaN(d)) return;
+    pushUndo();
+    // offset toward stock interior for the picked direction: c shifts by d along normal
+    DOC.guides.push({t:'gline', a:DRAW.a, b:DRAW.b, c:DRAW.c + d});
+    DRAW = null; stagePrompt('guide0'); persist(); draw();
+    return;
+  }
+  if (TOOL === 'line' && DRAW){
+    var p = parseNumericPoint(txt, {x:DRAW.x,y:DRAW.y});
+    if (p){ pushUndo(); DOC.ents.push({t:'line',x1:DRAW.x,y1:DRAW.y,x2:p.x,y2:p.y}); DRAW={stage:1,x:p.x,y:p.y}; persist(); draw(); }
+    return;
+  }
+  if (TOOL === 'line' && !DRAW){
+    var p0 = parseNumericPoint(txt, null);
+    if (p0){ DRAW = {stage:1, x:p0.x, y:p0.y}; stagePrompt('line1'); draw(); }
+    return;
+  }
+  if (TOOL === 'rect' && DRAW){
+    var m = txt.split(',');
+    if (m.length === 2){
+      var wv = parseFloat(m[0]), hv = parseFloat(m[1]);
+      if (!isNaN(wv) && !isNaN(hv)){
+        pushUndo();
+        DOC.ents.push({t:'rect', x:Math.min(DRAW.x, DRAW.x+wv), y:Math.min(DRAW.y, DRAW.y+hv),
+                       w:Math.abs(wv), h:Math.abs(hv)});
+        DRAW = null; stagePrompt('rect0'); persist(); draw();
+      }
+    }
+    return;
+  }
+  if (TOOL === 'circle' && DRAW){
+    var mm = txt.trim().match(/^([DdRr])\s*([0-9.]+)$/);
+    if (mm){
+      var r = parseFloat(mm[2]) / (mm[1].toUpperCase()==='D' ? 2 : 1);
+      pushUndo(); DOC.ents.push({t:'circle',cx:DRAW.x,cy:DRAW.y,r:r});
+      DRAW = null; stagePrompt('circle0'); persist(); draw();
+    }
+    return;
+  }
+  if (TOOL === 'circle' && !DRAW){
+    var pc = parseNumericPoint(txt, null);
+    if (pc){ DRAW = {stage:1, x:pc.x, y:pc.y}; stagePrompt('circle1'); draw(); }
+    return;
+  }
+}
+
+/* ---------------- prompt / hint ---------------- */
+function showPrompt(label, val, selectAll){
+  document.getElementById('promptLbl').textContent = label;
+  var i = document.getElementById('promptIn');
+  i.value = val || '';
+  document.getElementById('promptBar').classList.add('on');
+  i.focus();
+  if (selectAll) i.select();
+}
+function hidePrompt(){
+  document.getElementById('promptBar').classList.remove('on');
+  document.getElementById('promptHint').classList.remove('on');
+  document.getElementById('promptIn').blur();
+}
+function showHint(t){
+  var h = document.getElementById('promptHint');
+  h.textContent = t; h.classList.add('on');
+}
+
+/* ---------------- persistence ---------------- */
+function persist(){
+  try{ localStorage.setItem('kerfDesign', JSON.stringify(DOC)); }catch(e){}
+}
+function restore(){
+  try{
+    var s = localStorage.getItem('kerfDesign');
+    if (s){ var d = JSON.parse(s); if (d && d.stock) DOC = d; }
+  }catch(e){}
+  document.getElementById('stkW').value = DOC.stock.w;
+  document.getElementById('stkH').value = DOC.stock.h;
+  document.getElementById('stkOrigin').value = DOC.stock.origin;
+}
+
+/* ---------------- rendering ---------------- */
+function draw(){
+  var w = cv.width = cv.clientWidth * (window.devicePixelRatio||1);
+  var h = cv.height = cv.clientHeight * (window.devicePixelRatio||1);
+  ctx.setTransform(window.devicePixelRatio||1,0,0,window.devicePixelRatio||1,0,0);
+  ctx.clearRect(0,0,cv.clientWidth,cv.clientHeight);
+
+  // grid
+  var step = VIEW.scale > 8 ? 1 : (VIEW.scale > 2 ? 5 : 10);
+  var tl = s2w(0,0), br = s2w(cv.clientWidth, cv.clientHeight);
+  ctx.strokeStyle = '#1b2129'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (var gx = Math.floor(tl.x/step)*step; gx <= br.x; gx += step){
+    var sx = w2s(gx,0).x; ctx.moveTo(sx,0); ctx.lineTo(sx,cv.clientHeight);
+  }
+  for (var gy = Math.floor(br.y/step)*step; gy <= tl.y; gy += step){
+    var sy = w2s(0,gy).y; ctx.moveTo(0,sy); ctx.lineTo(cv.clientWidth,sy);
+  }
+  ctx.stroke();
+
+  // axes at 0,0
+  var o = w2s(0,0);
+  ctx.strokeStyle = '#2a323c'; ctx.beginPath();
+  ctx.moveTo(o.x,0); ctx.lineTo(o.x,cv.clientHeight);
+  ctx.moveTo(0,o.y); ctx.lineTo(cv.clientWidth,o.y); ctx.stroke();
+
+  // stock
+  var sr = stockRect();
+  var a = w2s(sr.x0, sr.y1), b = w2s(sr.x1, sr.y0);
+  ctx.strokeStyle = '#51617a'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(a.x, a.y, b.x-a.x, b.y-a.y);
+  ctx.fillStyle = 'rgba(81,97,122,0.05)';
+  ctx.fillRect(a.x, a.y, b.x-a.x, b.y-a.y);
+
+  // guides
+  ctx.strokeStyle = '#6fa8dc'; ctx.lineWidth = 1; ctx.setLineDash([6,5]);
+  DOC.guides.forEach(function(g){
+    // draw line a x + b y = c across view
+    var pts = [];
+    [[tl.x,'x'],[br.x,'x'],[br.y,'y'],[tl.y,'y']].forEach(function(bound){
+      var v = bound[0];
+      if (bound[1]==='x' && Math.abs(g.b) > 1e-9) pts.push({x:v, y:(g.c - g.a*v)/g.b});
+      if (bound[1]==='y' && Math.abs(g.a) > 1e-9) pts.push({x:(g.c - g.b*v)/g.a, y:v});
+    });
+    pts = pts.filter(function(p){ return p.x >= tl.x-1 && p.x <= br.x+1 && p.y >= br.y-1 && p.y <= tl.y+1; });
+    if (pts.length >= 2){
+      var p1 = w2s(pts[0].x, pts[0].y), p2 = w2s(pts[1].x, pts[1].y);
+      ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
+    }
+  });
+  ctx.setLineDash([]);
+
+  // entities
+  DOC.ents.forEach(function(e,i){
+    var isSel = SEL.indexOf(i) >= 0;
+    ctx.strokeStyle = isSel ? '#ffc96b' : '#dce3ea';
+    ctx.lineWidth = isSel ? 2.5 : 1.6;
+    ctx.beginPath();
+    if (e.t==='line'){ var p1=w2s(e.x1,e.y1), p2=w2s(e.x2,e.y2); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); }
+    else if (e.t==='rect'){ var r1=w2s(e.x,e.y+e.h), r2=w2s(e.x+e.w,e.y); ctx.rect(r1.x,r1.y, r2.x-r1.x, r2.y-r1.y); }
+    else if (e.t==='circle'){ var c=w2s(e.cx,e.cy); ctx.arc(c.x,c.y, e.r*VIEW.scale, 0, Math.PI*2); }
+    else if (e.t==='arc'){
+      var ca=w2s(e.cx,e.cy);
+      ctx.arc(ca.x, ca.y, e.r*VIEW.scale, -e.a0, -e.a1, e.ccw); // screen Y-flip mirrors handedness
+    }
+    else if (e.t==='poly'){
+      var s0=w2s(e.pts[0][0],e.pts[0][1]); ctx.moveTo(s0.x,s0.y);
+      for (var k=1;k<e.pts.length;k++){ var sp=w2s(e.pts[k][0],e.pts[k][1]); ctx.lineTo(sp.x,sp.y); }
+      if (e.closed) ctx.closePath();
+    }
+    ctx.stroke();
+  });
+
+  // dimension layer for the current selection
+  function dimText(txt, sx, sy){
+    ctx.font = '11px JetBrains Mono, monospace';
+    var tw = ctx.measureText(txt).width;
+    ctx.fillStyle = 'rgba(20,24,29,0.85)';
+    ctx.fillRect(sx - tw/2 - 4, sy - 9, tw + 8, 16);
+    ctx.fillStyle = '#ffc96b';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, sx, sy);
+  }
+  function dimLine(w1, w2, label){
+    var s1 = w2s(w1.x, w1.y), s2 = w2s(w2.x, w2.y);
+    ctx.strokeStyle = '#ffc96b'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();
+    [[s1,s2],[s2,s1]].forEach(function(pr){
+      var ax = pr[0].x, ay = pr[0].y;
+      var ux = pr[1].x - ax, uy = pr[1].y - ay;
+      var L = Math.hypot(ux,uy) || 1; ux/=L; uy/=L;
+      ctx.beginPath();
+      ctx.moveTo(ax + ux*8 - uy*3, ay + uy*8 + ux*3);
+      ctx.lineTo(ax, ay);
+      ctx.lineTo(ax + ux*8 + uy*3, ay + uy*8 - ux*3);
+      ctx.stroke();
+    });
+    dimText(label, (s1.x+s2.x)/2, (s1.y+s2.y)/2 - 12);
+  }
+  if (TOOL === 'select' && SEL.length === 1 && DOC.ents[SEL[0]]){
+    var se = DOC.ents[SEL[0]];
+    if (se.t === 'line'){
+      var n = lineNorm(se);
+      var mx = (se.x1+se.x2)/2 + n.a*(14/VIEW.scale), my2 = (se.y1+se.y2)/2 + n.b*(14/VIEW.scale);
+      var sp = w2s(mx, my2);
+      dimText(Math.hypot(se.x2-se.x1, se.y2-se.y1).toFixed(2), sp.x, sp.y);
+    } else if (se.t === 'circle'){
+      var cp = w2s(se.cx + se.r, se.cy);
+      dimText('\u00d8' + (se.r*2).toFixed(2), cp.x + 26, cp.y);
+    } else if (se.t === 'arc'){
+      var mid = e0mid(se);
+      var mp2 = w2s(mid.x, mid.y);
+      dimText('R' + se.r.toFixed(2), mp2.x, mp2.y - 14);
+    } else if (se.t === 'rect'){
+      var wb = w2s(se.x + se.w/2, se.y);
+      dimText(se.w.toFixed(2), wb.x, wb.y + 14);
+      var hr = w2s(se.x + se.w, se.y + se.h/2);
+      dimText(se.h.toFixed(2), hr.x + 26, hr.y);
+    }
+  }
+  if (TOOL === 'select' && SEL.length === 2 && DOC.ents[SEL[0]] && DOC.ents[SEL[1]]){
+    var dg = dimGeometry(DOC.ents[SEL[0]], DOC.ents[SEL[1]]);
+    if (dg) dimLine(dg.p1, dg.p2, dg.label);
+  }
+
+  // in-progress rubber band
+  if (DRAW && MOUSE.snap){
+    var m = MOUSE.snap;
+    ctx.strokeStyle = '#e8a33d'; ctx.lineWidth = 1.2; ctx.setLineDash([4,4]);
+    ctx.beginPath();
+    if (TOOL==='line' && DRAW.stage===1){ var q=w2s(DRAW.x,DRAW.y), q2=w2s(m.x,m.y); ctx.moveTo(q.x,q.y); ctx.lineTo(q2.x,q2.y); }
+    else if (TOOL==='rect' && DRAW.stage===1){
+      var ra=w2s(Math.min(DRAW.x,m.x), Math.max(DRAW.y,m.y)), rb=w2s(Math.max(DRAW.x,m.x), Math.min(DRAW.y,m.y));
+      ctx.rect(ra.x,ra.y, rb.x-ra.x, rb.y-ra.y);
+    }
+    else if (TOOL==='circle' && DRAW.stage===1){
+      var cc=w2s(DRAW.x,DRAW.y); ctx.arc(cc.x,cc.y, Math.hypot(m.x-DRAW.x,m.y-DRAW.y)*VIEW.scale, 0, Math.PI*2);
+    }
+    else if (TOOL==='arc' && DRAW.stage===1){
+      var ac=w2s(DRAW.cx,DRAW.cy), am=w2s(m.x,m.y);
+      ctx.moveTo(ac.x,ac.y); ctx.lineTo(am.x,am.y);
+    }
+    else if (TOOL==='arc' && DRAW.stage===2){
+      var ac2=w2s(DRAW.cx,DRAW.cy);
+      var aEnd = angTo(DRAW.cx, DRAW.cy, m);
+      ctx.arc(ac2.x, ac2.y, DRAW.r*VIEW.scale, -DRAW.a0, -aEnd, true);
+    }
+    else if (TOOL==='poly' && DRAW.pts){
+      var s0p=w2s(DRAW.pts[0][0], DRAW.pts[0][1]);
+      ctx.moveTo(s0p.x, s0p.y);
+      for (var pk=1; pk<DRAW.pts.length; pk++){
+        var sp2=w2s(DRAW.pts[pk][0], DRAW.pts[pk][1]); ctx.lineTo(sp2.x, sp2.y);
+      }
+      var mm2=w2s(m.x,m.y); ctx.lineTo(mm2.x,mm2.y);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // snap marker
+  if (MOUSE.snap && MOUSE.snap.k !== 'grid'){
+    var sm = w2s(MOUSE.snap.x, MOUSE.snap.y);
+    ctx.strokeStyle = MOUSE.snap.k==='guideX' ? '#7fb069' : '#e8a33d';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(sm.x-4, sm.y-4, 8, 8);
+  }
+}
+
+/* ---------------- entity dimensions ---------------- */
+function entDims(e){
+  if (e.t === 'line'){
+    var dx = e.x2-e.x1, dy = e.y2-e.y1;
+    var ang = Math.atan2(dy,dx)*180/Math.PI;
+    return 'L ' + Math.hypot(dx,dy).toFixed(2) + '  \u2220 ' + ang.toFixed(1) + '\u00b0';
+  }
+  if (e.t === 'circle') return '\u00d8 ' + (e.r*2).toFixed(2) + '  R ' + e.r.toFixed(2);
+  if (e.t === 'arc')    return 'R ' + e.r.toFixed(2) + '  sweep ' + (arcSweep(e)*180/Math.PI).toFixed(1) + '\u00b0' + (e.ccw ? ' CCW' : ' CW');
+  if (e.t === 'rect')   return 'W ' + e.w.toFixed(2) + '  H ' + e.h.toFixed(2);
+  if (e.t === 'poly'){
+    var L = 0;
+    entityEdges(e).forEach(function(ed){ L += Math.hypot(ed[2]-ed[0], ed[3]-ed[1]); });
+    return e.pts.length + ' pts  L ' + L.toFixed(2) + (e.closed ? '  closed' : '');
+  }
+  return '';
+}
+
+/* ---------------- live dimension readout ---------------- */
+function updateReadout(){
+  document.getElementById('fx').textContent = MOUSE.snap ? MOUSE.snap.x.toFixed(2) : '—';
+  document.getElementById('fy').textContent = MOUSE.snap ? MOUSE.snap.y.toFixed(2) : '—';
+  var d = '';
+  if (DRAW && MOUSE.snap){
+    if (TOOL==='line' && DRAW.stage===1){
+      var dx=MOUSE.snap.x-DRAW.x, dy=MOUSE.snap.y-DRAW.y;
+      d = 'Δ ' + dx.toFixed(2) + ', ' + dy.toFixed(2) + '  L ' + Math.hypot(dx,dy).toFixed(2);
+    } else if (TOOL==='rect' && DRAW.stage===1){
+      d = 'W ' + Math.abs(MOUSE.snap.x-DRAW.x).toFixed(2) + '  H ' + Math.abs(MOUSE.snap.y-DRAW.y).toFixed(2);
+    } else if (TOOL==='circle' && DRAW.stage===1){
+      var r = Math.hypot(MOUSE.snap.x-DRAW.x, MOUSE.snap.y-DRAW.y);
+      d = 'R ' + r.toFixed(2) + '  D ' + (r*2).toFixed(2);
+    } else if (TOOL==='arc' && DRAW.stage===1){
+      d = 'R ' + Math.hypot(MOUSE.snap.x-DRAW.cx, MOUSE.snap.y-DRAW.cy).toFixed(2);
+    } else if (TOOL==='arc' && DRAW.stage===2){
+      var swp = ((angTo(DRAW.cx,DRAW.cy,MOUSE.snap) - DRAW.a0) % (2*Math.PI) + 2*Math.PI) % (2*Math.PI);
+      d = 'R ' + DRAW.r.toFixed(2) + '  sweep ' + (swp*180/Math.PI).toFixed(1) + '\u00b0';
+    }
+  }
+  if (!d && TOOL === 'select'){
+    if (SEL.length === 1 && DOC.ents[SEL[0]]) d = entDims(DOC.ents[SEL[0]]);
+    else if (SEL.length === 2 && DOC.ents[SEL[0]] && DOC.ents[SEL[1]])
+      d = relDims(DOC.ents[SEL[0]], DOC.ents[SEL[1]]);
+    else if (SEL.length > 2) d = SEL.length + ' selected';
+  }
+  document.getElementById('fdim').textContent = d;
+}
+
+function selToggle(i){
+  var at = SEL.indexOf(i);
+  if (at >= 0) SEL.splice(at, 1); else SEL.push(i);
+}
+
+/* ---------------- relationship dimensions ----------------
+   Each entity reduces to a reference geometry against its partner:
+   circle -> point (center); line -> line; rect -> nearest edge (a line).
+   Distances: point-point, point-line, line-line (parallel).
+   The SECOND-selected entity always moves, translated rigidly. */
+function repPoint(e){
+  if (e.t === 'circle') return {x:e.cx, y:e.cy};
+  if (e.t === 'arc')    return {x:e.cx, y:e.cy};
+  if (e.t === 'line')   return {x:(e.x1+e.x2)/2, y:(e.y1+e.y2)/2};
+  if (e.t === 'rect')   return {x:e.x+e.w/2, y:e.y+e.h/2};
+  if (e.t === 'poly')   return {x:e.pts[0][0], y:e.pts[0][1]};
+  return {x:0,y:0};
+}
+function segNorm(x1,y1,x2,y2){
+  var dx=x2-x1, dy=y2-y1, L=Math.hypot(dx,dy)||1;
+  var a=-dy/L, b=dx/L;
+  return {a:a, b:b, c:a*x1+b*y1, x1:x1,y1:y1,x2:x2,y2:y2};
+}
+function lineNorm(e){ return segNorm(e.x1,e.y1,e.x2,e.y2); }
+function nearestRectEdge(e, hint){
+  var best=null;
+  entityEdges(e).forEach(function(ed){
+    var d = distToSeg(hint.x, hint.y, ed[0],ed[1],ed[2],ed[3]);
+    if (!best || d < best.d) best = {d:d, ed:ed};
+  });
+  return segNorm(best.ed[0],best.ed[1],best.ed[2],best.ed[3]);
+}
+function refGeom(e, other){
+  if (e.t === 'circle') return {pt:{x:e.cx, y:e.cy}};
+  if (e.t === 'arc')    return {pt:{x:e.cx, y:e.cy}};
+  if (e.t === 'line')   return {ln:lineNorm(e)};
+  if (e.t === 'rect')   return {ln:nearestRectEdge(e, repPoint(other))};
+  return null;
+}
+function sd(n, px, py){ return n.a*px + n.b*py - n.c; }
+function relInfo(e1, e2){
+  var g1 = refGeom(e1, e2), g2 = refGeom(e2, e1);
+  if (!g1 || !g2) return {kind:'unsupported'};
+  if (g1.pt && g2.pt){
+    var L = Math.hypot(g2.pt.x-g1.pt.x, g2.pt.y-g1.pt.y);
+    return {kind:'dist', mode:'pp', cur:L};
+  }
+  if (g1.ln && g2.pt) return {kind:'dist', mode:'pl', cur:Math.abs(sd(g1.ln, g2.pt.x, g2.pt.y))};
+  if (g1.pt && g2.ln) return {kind:'dist', mode:'lp', cur:Math.abs(sd(g2.ln, g1.pt.x, g1.pt.y))};
+  // line-line: parallel required
+  var a1 = Math.atan2(g1.ln.y2-g1.ln.y1, g1.ln.x2-g1.ln.x1);
+  var a2 = Math.atan2(g2.ln.y2-g2.ln.y1, g2.ln.x2-g2.ln.x1);
+  var ang = Math.abs(((a1-a2) % Math.PI + Math.PI) % Math.PI);
+  ang = Math.min(ang, Math.PI - ang) * 180/Math.PI;
+  if (ang >= 0.5) return {kind:'angle', cur:ang};
+  return {kind:'dist', mode:'ll', cur:Math.abs(sd(g1.ln, g2.ln.x1, g2.ln.y1))};
+}
+function relDims(e1, e2){
+  var r = relInfo(e1, e2);
+  if (r.kind === 'angle') return 'not parallel  \u2220 ' + r.cur.toFixed(2) + '\u00b0';
+  if (r.kind === 'unsupported') return 'no dimension for this pair yet';
+  return 'dist ' + r.cur.toFixed(2);
+}
+function relApply(e1, e2, v){
+  var r = relInfo(e1, e2);
+  if (r.kind !== 'dist' || v <= 0) return false;
+  var g1 = refGeom(e1, e2), g2 = refGeom(e2, e1);
+  var dx = 0, dy = 0;
+  if (r.mode === 'pp'){
+    var vx = g2.pt.x-g1.pt.x, vy = g2.pt.y-g1.pt.y;
+    var L = Math.hypot(vx,vy);
+    if (L < 1e-9) return false;
+    dx = vx/L*(v-L); dy = vy/L*(v-L);
+  } else if (r.mode === 'pl' || r.mode === 'll'){
+    // reference line is g1; measured point is g2's point or g2 line's anchor
+    var mp = r.mode === 'pl' ? g2.pt : {x:g2.ln.x1, y:g2.ln.y1};
+    var d = sd(g1.ln, mp.x, mp.y);
+    var sgn = d >= 0 ? 1 : -1;
+    var mv = sgn*v - d;
+    dx = g1.ln.a*mv; dy = g1.ln.b*mv;
+  } else if (r.mode === 'lp'){
+    // reference is e1's point; e2 supplies the line and moves along its own normal
+    var d2 = sd(g2.ln, g1.pt.x, g1.pt.y);
+    var sgn2 = d2 >= 0 ? 1 : -1;
+    var shift = d2 - sgn2*v;
+    dx = g2.ln.a*shift; dy = g2.ln.b*shift;
+  } else return false;
+  moveEntity(e2, dx, dy);
+  return true;
+}
+/* geometry for drawing the dimension between two selected entities */
+function dimGeometry(e1, e2){
+  var r = relInfo(e1, e2);
+  if (r.kind !== 'dist') return null;
+  var g1 = refGeom(e1, e2), g2 = refGeom(e2, e1);
+  var p1, p2;
+  if (r.mode === 'pp'){ p1 = g1.pt; p2 = g2.pt; }
+  else if (r.mode === 'pl'){
+    var d = sd(g1.ln, g2.pt.x, g2.pt.y);
+    p1 = {x:g2.pt.x - g1.ln.a*d, y:g2.pt.y - g1.ln.b*d}; p2 = g2.pt;
+  }
+  else if (r.mode === 'lp'){
+    var d2 = sd(g2.ln, g1.pt.x, g1.pt.y);
+    p1 = g1.pt; p2 = {x:g1.pt.x - g2.ln.a*d2, y:g1.pt.y - g2.ln.b*d2};
+  }
+  else { // ll
+    var mp2 = {x:(g2.ln.x1+g2.ln.x2)/2, y:(g2.ln.y1+g2.ln.y2)/2};
+    var dl = sd(g1.ln, mp2.x, mp2.y);
+    p1 = {x:mp2.x - g1.ln.a*dl, y:mp2.y - g1.ln.b*dl}; p2 = mp2;
+  }
+  return {p1:p1, p2:p2, label:r.cur.toFixed(2)};
+}
+
+/* ---------------- entity move ---------------- */
+function moveEntity(e, dx, dy){
+  if (e.t==='line'){ e.x1+=dx; e.y1+=dy; e.x2+=dx; e.y2+=dy; }
+  else if (e.t==='rect'){ e.x+=dx; e.y+=dy; }
+  else if (e.t==='circle'){ e.cx+=dx; e.cy+=dy; }
+  else if (e.t==='arc'){ e.cx+=dx; e.cy+=dy; }
+  else if (e.t==='poly'){ e.pts.forEach(function(p){ p[0]+=dx; p[1]+=dy; }); }
+}
+
+/* ---------------- wiring ---------------- */
+function fit(){
+  var sr = stockRect();
+  var margin = 40;
+  var sx = (cv.clientWidth - 2*margin) / (sr.x1 - sr.x0);
+  var sy = (cv.clientHeight - 2*margin) / (sr.y1 - sr.y0);
+  VIEW.scale = Math.max(0.5, Math.min(sx, sy));
+  var cx = (sr.x0+sr.x1)/2, cy2 = (sr.y0+sr.y1)/2;
+  VIEW.ox = cv.clientWidth/2 - cx*VIEW.scale;
+  VIEW.oy = cv.clientHeight/2 + cy2*VIEW.scale;
+  draw();
+}
+
+function wire(){
+  cv = document.getElementById('cv');
+  ctx = cv.getContext('2d');
+  restore();
+  fit();
+
+  document.querySelectorAll('#toolCol .tool[data-tool]').forEach(function(b){
+    b.addEventListener('click', function(){ setTool(b.dataset.tool); });
+  });
+  document.getElementById('clearGuides').addEventListener('click', function(){
+    if (!DOC.guides.length) return;
+    pushUndo(); DOC.guides = []; persist(); draw();
+  });
+  document.getElementById('undoBtn').addEventListener('click', doUndo);
+  document.getElementById('redoBtn').addEventListener('click', doRedo);
+  document.getElementById('fitBtn2').addEventListener('click', fit);
+
+  ['stkW','stkH','stkOrigin'].forEach(function(id){
+    document.getElementById(id).addEventListener('change', function(){
+      DOC.stock.w = parseFloat(document.getElementById('stkW').value) || 200;
+      DOC.stock.h = parseFloat(document.getElementById('stkH').value) || 120;
+      DOC.stock.origin = document.getElementById('stkOrigin').value;
+      persist(); fit();
+    });
+  });
+
+  // save / load
+  document.getElementById('saveBtn').addEventListener('click', function(){
+    var blob = new Blob([JSON.stringify(DOC, null, 1)], {type:'application/json'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'design.kerf.json';
+    a.click();
+  });
+  document.getElementById('loadBtn').addEventListener('click', function(){
+    document.getElementById('loadFile').click();
+  });
+  document.getElementById('loadFile').addEventListener('change', function(e){
+    var f = e.target.files[0]; if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function(){
+      try{
+        var d = JSON.parse(rd.result);
+        if (d && d.stock && d.ents){ pushUndo(); DOC = d; restore(); persist(); fit(); }
+      }catch(err){ alert('Not a Kerf design file.'); }
+    };
+    rd.readAsText(f);
+    e.target.value = '';
+  });
+
+  // canvas interactions
+  var pan = null;
+  cv.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  cv.addEventListener('pointerdown', function(e){
+    cv.setPointerCapture(e.pointerId);
+    MOUSE.shift = e.shiftKey;
+    if (e.button === 1 || e.button === 2){ pan = {x:e.clientX, y:e.clientY}; return; }
+    var r = cv.getBoundingClientRect();
+    var w = s2w(e.clientX - r.left, e.clientY - r.top);
+    toolClick(w, MOUSE.snap || resolveSnap(w));
+  });
+  cv.addEventListener('pointermove', function(e){
+    var r = cv.getBoundingClientRect();
+    MOUSE.mx = e.clientX - r.left; MOUSE.my = e.clientY - r.top;
+    if (pan){
+      VIEW.ox += e.clientX - pan.x; VIEW.oy += e.clientY - pan.y;
+      pan = {x:e.clientX, y:e.clientY};
+      draw(); return;
+    }
+    var w = s2w(MOUSE.mx, MOUSE.my);
+    MOUSE.snap = resolveSnap(w);
+    // dragging selection
+    if (TOOL==='select' && DRAW && DRAW.stage==='drag' && SEL.length && (e.buttons & 1)){
+      var dx = MOUSE.snap.x - DRAW.lx, dy = MOUSE.snap.y - DRAW.ly;
+      if (dx || dy){
+        if (!DRAW.pushed){ pushUndo(); DRAW.pushed = true; }
+        SEL.forEach(function(si){ moveEntity(DOC.ents[si], dx, dy); });
+        DRAW.lx = MOUSE.snap.x; DRAW.ly = MOUSE.snap.y;
+        DRAW.moved = true; persist();
+      }
+    }
+    updateReadout(); draw();
+  });
+  cv.addEventListener('pointerup', function(){
+    pan = null;
+    if (TOOL==='select' && DRAW && DRAW.stage==='drag') DRAW = null;
+  });
+  cv.addEventListener('wheel', function(e){
+    e.preventDefault();
+    var r = cv.getBoundingClientRect();
+    var mx = e.clientX - r.left, my = e.clientY - r.top;
+    var before = s2w(mx, my);
+    VIEW.scale *= (e.deltaY > 0 ? 1/1.15 : 1.15);
+    VIEW.scale = Math.max(0.2, Math.min(60, VIEW.scale));
+    var after = w2s(before.x, before.y);
+    VIEW.ox += mx - after.x; VIEW.oy += my - after.y;
+    draw();
+  }, {passive:false});
+
+  // prompt input
+  var pin = document.getElementById('promptIn');
+  pin.addEventListener('keydown', function(e){
+    if (e.key === 'Enter'){ toolCommitText(pin.value); pin.value=''; }
+    if (e.key === 'Escape'){ DRAW = null; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); draw(); }
+    e.stopPropagation();
+  });
+
+  // global keys: type-to-enter numbers, tool hotkeys, editing
+  window.addEventListener('keydown', function(e){
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.ctrlKey && e.key.toLowerCase() === 'z'){ e.preventDefault(); doUndo(); return; }
+    if (e.ctrlKey && e.key.toLowerCase() === 'y'){ e.preventDefault(); doRedo(); return; }
+    if (e.key === 'Escape'){ DRAW = null; SEL = []; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); draw(); return; }
+    if (e.key.toLowerCase() === 'd' && TOOL === 'select' && SEL.length === 2 && !e.ctrlKey){
+      var r2 = relInfo(DOC.ents[SEL[0]], DOC.ents[SEL[1]]);
+      if (r2.kind === 'angle'){
+        showPrompt('Lines are not parallel (\u2220 ' + r2.cur.toFixed(2) + '\u00b0) \u2014 distance needs parallel lines. Esc to close.', '', false);
+        return;
+      }
+      if (r2.kind === 'unsupported'){
+        showPrompt('No dimension for this pair yet. Esc to close.', '', false);
+        return;
+      }
+      DRAW = {stage:'dimEdit2', a:SEL[0], b:SEL[1]};
+      showPrompt('Distance \u2014 current ' + r2.cur.toFixed(2) + ' mm; type new (the second-selected entity moves)', r2.cur.toFixed(2), true);
+      return;
+    }
+    if (e.key.toLowerCase() === 'd' && TOOL === 'select' && SEL.length === 1 && !e.ctrlKey){
+      var de = DOC.ents[SEL[0]];
+      DRAW = {stage:'dimEdit', ent:SEL[0]};
+      if (de.t === 'line'){
+        var dl = Math.hypot(de.x2-de.x1, de.y2-de.y1);
+        showPrompt('Line length \u2014 type new length ("80") or length<angle ("80<45"); start point stays anchored', dl.toFixed(2), true);
+      } else if (de.t === 'circle'){
+        showPrompt('Circle \u2014 type new diameter ("6"), or R for radius ("R3")', (de.r*2).toFixed(2), true);
+      } else if (de.t === 'arc'){
+        showPrompt('Arc \u2014 type new radius; center and angles stay', de.r.toFixed(2), true);
+      } else if (de.t === 'rect'){
+        showPrompt('Rect \u2014 type new "W,H"; min corner stays anchored', de.w.toFixed(2) + ',' + de.h.toFixed(2), true);
+      } else {
+        showPrompt('Polyline \u2014 per-vertex editing comes next; Esc to close', '', false);
+      }
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && SEL.length){
+      pushUndo();
+      SEL.slice().sort(function(a,b){return b-a;}).forEach(function(si){ DOC.ents.splice(si,1); });
+      SEL=[]; persist(); draw(); return;
+    }
+    if (SEL.length && (e.key.indexOf('Arrow') === 0)){
+      e.preventDefault();
+      var st = e.shiftKey ? 0.1 : 1;
+      var dx = e.key==='ArrowLeft' ? -st : e.key==='ArrowRight' ? st : 0;
+      var dy = e.key==='ArrowDown' ? -st : e.key==='ArrowUp' ? st : 0;
+      pushUndo();
+      SEL.forEach(function(si){ moveEntity(DOC.ents[si], dx, dy); });
+      persist(); draw(); return;
+    }
+    var toolBusy = (TOOL !== 'select') && (DRAW !== null || document.getElementById('promptBar').classList.contains('on'));
+    if (!toolBusy){
+      var hot = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide'};
+      if (hot[e.key.toLowerCase()] && !e.ctrlKey){ setTool(hot[e.key.toLowerCase()]); return; }
+      if (e.key.toLowerCase() === 'f'){ fit(); return; }
+    }
+    // any printable char while a tool is live routes into the entry bar
+    if (TOOL !== 'select' && e.key.length === 1 && !e.ctrlKey && !e.altKey){
+      var pin2 = document.getElementById('promptIn');
+      document.getElementById('promptBar').classList.add('on');
+      pin2.focus();
+      pin2.value += e.key;
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Enter' && TOOL !== 'select'){ toolCommitText(''); return; }
+    if (e.key.toLowerCase() === 'f' && TOOL === 'select'){ fit(); return; }
+  });
+
+  new ResizeObserver(function(){ draw(); }).observe(cv);
+}
+document.addEventListener('DOMContentLoaded', wire);
+</script>
+</body>
+</html>
