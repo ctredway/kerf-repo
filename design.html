@@ -43,6 +43,10 @@
   .tGroup.dragOver{outline:2px dashed var(--amber);outline-offset:-2px}
   .tGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;padding:2px 8px 10px}
   .tGroup.collapsed .tGrid{display:none}
+  .tRows{padding:2px 10px 10px;display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--muted)}
+  .tGroup.collapsed .tRows{display:none}
+  .tRows .crow{display:flex;align-items:center;gap:8px}
+  .tRows input[type=color]{width:34px;height:22px;padding:1px;border:1px solid var(--line);border-radius:4px;background:var(--panel-deep);cursor:pointer}
   #toolPanel button.tool{width:100%;height:36px}
 
   #canvasWrap{grid-row:2;grid-column:2;position:relative;min-width:0;min-height:0}
@@ -55,6 +59,13 @@
   #promptHint{position:absolute;left:50%;transform:translateX(-50%);bottom:60px;color:var(--faint);font-size:12px;z-index:5;background:rgba(20,24,29,.8);padding:3px 10px;border-radius:4px;display:none}
   #promptHint.on{display:block}
 
+  #impModal{position:fixed;inset:0;background:rgba(10,13,17,.65);display:flex;align-items:center;justify-content:center;z-index:70}
+  #impModal[hidden]{display:none}
+  #impPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 20px;width:430px;box-shadow:0 14px 44px rgba(0,0,0,.55);font-size:13px}
+  #impPanel h3{font-size:15px;margin-bottom:10px}
+  #impPanel .row{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  #impPanel input[type=checkbox],#impPanel input[type=radio]{accent-color:var(--amber);width:auto}
+  #impPanel .note{color:var(--faint);font-size:12px;line-height:1.5;margin-top:4px}
   footer{grid-column:1/3;display:flex;align-items:center;gap:16px;padding:8px 16px;background:var(--panel);border-top:1px solid var(--line);font-family:var(--mono);font-size:12.5px;color:var(--muted)}
   footer b{color:var(--ink);font-weight:500}
   #hint{color:var(--faint);font-family:var(--sans)}
@@ -64,7 +75,7 @@
 <div id="app">
   <header>
     <div class="brand">Kerf<span> Design</span></div>
-    <div class="sub">precision 2D sketcher — v0.1</div>
+    <div class="sub" id="verSub">precision 2D sketcher</div>
     <div class="spacer"></div>
     <label style="color:var(--muted);font-size:12.5px">Stock</label>
     <input type="number" id="stkW" value="200" step="1" title="Stock width, mm"> ×
@@ -73,7 +84,7 @@
       <option value="corner">zero at front-left</option>
       <option value="center">zero at center</option>
     </select>
-    <input type="file" id="loadFile" accept=".json,application/json" hidden>
+    <input type="file" id="loadFile" accept=".json,.crv" hidden>
   </header>
 
   <div id="toolPanel"></div>
@@ -84,6 +95,25 @@
     <div id="promptBar">
       <label id="promptLbl">value</label>
       <input id="promptIn" autocomplete="off" spellcheck="false">
+    </div>
+  </div>
+
+  <div id="impModal" hidden>
+    <div id="impPanel">
+      <h3>Import VCarve file</h3>
+      <div class="row"><span id="impStock" style="color:var(--muted)"></span></div>
+      <div class="row"><input type="checkbox" id="impDrawing" checked><label for="impDrawing" id="impDrawingLbl">Drawing vectors</label></div>
+      <div class="row"><input type="checkbox" id="impPreview"><label for="impPreview" id="impPreviewLbl">Toolpath preview vectors</label></div>
+      <div class="row" style="margin-top:6px">
+        <span style="color:var(--muted)">Job units:</span>
+        <input type="radio" name="impUnits" id="impMM" checked><label for="impMM">mm</label>
+        <input type="radio" name="impUnits" id="impIN"><label for="impIN">inches (converted)</label>
+      </div>
+      <p class="note">Toolpath previews are the cutter-offset ghosts VCarve draws for calculated toolpaths. Usually you want the drawing only.</p>
+      <div class="row" style="margin-top:12px">
+        <button id="impGo" class="primary">Import</button>
+        <button id="impCancel">Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -98,6 +128,7 @@
 
 <script>
 'use strict';
+var DESIGN_VERSION = '0.14.0'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -146,6 +177,7 @@ function snapPoints(){
       var ae = arcEnds(e);
       pts.push({x:ae[0].x,y:ae[0].y,k:'end'},{x:ae[1].x,y:ae[1].y,k:'end'},{x:e.cx,y:e.cy,k:'center'});
     }
+    else if (e.t==='path'){ e.pts.forEach(function(p){ pts.push({x:p[0],y:p[1],k:'end'}); }); }
   });
   // guide-guide intersections
   for (var i=0;i<DOC.guides.length;i++)
@@ -258,6 +290,13 @@ function pickEntity(w){
     var d = 1e9;
     if (e.t==='circle') d = Math.abs(Math.hypot(w.x-e.cx, w.y-e.cy) - e.r);
     else if (e.t==='arc') d = arcHitDist(e, w);
+    else if (e.t==='path'){
+      var tp = e._tess || (e._tess = tessPath(e, 0.25));
+      for (var pk = 0; pk < tp.length - (e.closed ? 0 : 1); pk++){
+        var q1 = tp[pk], q2 = tp[(pk+1) % tp.length];
+        d = Math.min(d, distToSeg(w.x, w.y, q1[0], q1[1], q2[0], q2[1]));
+      }
+    }
     else entityEdges(e).forEach(function(ed){ d = Math.min(d, distToSeg(w.x,w.y, ed[0],ed[1],ed[2],ed[3])); });
     if (d < tol && (!best || d < best.d)) best = {i:i, d:d};
   });
@@ -553,18 +592,185 @@ function showHint(t){
   h.textContent = t; h.classList.add('on');
 }
 
+/* ---------------- VCarve .crv import ----------------
+   .crv = OLE compound document; vectors live uncompressed in the
+   VectorData/2dDataV2 stream as span lists: records of
+   [bulgeFlag][type=2][0 0 0][4 bytes][x f64][y f64][32 cached bytes][i32]
+   + trailing bulge f64 when bulgeFlag=1 (69B arc / 61B straight records).
+   Reverse engineered from VCarve Pro 12.510 minimal pairs. */
+function oleParse(buf){
+  var u8 = new Uint8Array(buf);
+  var dv = new DataView(buf);
+  if (dv.getUint32(0, true) !== 0xE011CFD0) return null; // D0 CF 11 E0
+  var secSize = 1 << dv.getUint16(30, true);
+  var dirStart = dv.getUint32(48, true);
+  var miniCutoff = dv.getUint32(56, true);
+  var miniFatStart = dv.getUint32(60, true);
+  var difatStart = dv.getUint32(68, true);
+  var END = 0xFFFFFFFE;
+  function secOff(n){ return secSize * (n + 1); }
+  // FAT via DIFAT (header 109 entries + chained DIFAT sectors)
+  var fatSecs = [];
+  for (var i = 0; i < 109; i++){
+    var e = dv.getUint32(76 + i*4, true);
+    if (e < 0xFFFFFFFA) fatSecs.push(e);
+  }
+  var ds = difatStart;
+  while (ds < 0xFFFFFFFA){
+    var base = secOff(ds);
+    for (var j = 0; j < secSize/4 - 1; j++){
+      var e2 = dv.getUint32(base + j*4, true);
+      if (e2 < 0xFFFFFFFA) fatSecs.push(e2);
+    }
+    ds = dv.getUint32(base + secSize - 4, true);
+  }
+  var fat = [];
+  fatSecs.forEach(function(fs){
+    var b = secOff(fs);
+    for (var k = 0; k < secSize/4; k++) fat.push(dv.getUint32(b + k*4, true));
+  });
+  function chain(start){
+    var out = [], sct = start, guard = 0;
+    while (sct < 0xFFFFFFFA && guard++ < 1e6){ out.push(sct); sct = fat[sct]; }
+    return out;
+  }
+  function readChain(start, size){
+    var secs = chain(start);
+    var out = new Uint8Array(secs.length * secSize);
+    secs.forEach(function(sc, idx){ out.set(u8.subarray(secOff(sc), secOff(sc) + secSize), idx*secSize); });
+    return out.subarray(0, size);
+  }
+  // directory
+  var dirBytes = readChain(dirStart, chain(dirStart).length * secSize);
+  var entries = [];
+  for (var off = 0; off + 128 <= dirBytes.length; off += 128){
+    var nlen = dirBytes[off+64] | (dirBytes[off+65] << 8);
+    if (!nlen) continue;
+    var name = '';
+    for (var c = 0; c < nlen - 2; c += 2) name += String.fromCharCode(dirBytes[off+c] | (dirBytes[off+c+1] << 8));
+    var edv = new DataView(dirBytes.buffer, dirBytes.byteOffset + off, 128);
+    entries.push({name: name, type: dirBytes[off+66], start: edv.getUint32(116, true), size: edv.getUint32(120, true)});
+  }
+  var root = entries.filter(function(e){ return e.type === 5; })[0];
+  var miniStream = root ? readChain(root.start, root.size) : new Uint8Array(0);
+  var miniFat = [];
+  chain(miniFatStart).forEach(function(sc){
+    var b = secOff(sc);
+    for (var k2 = 0; k2 < secSize/4; k2++) miniFat.push(dv.getUint32(b + k2*4, true));
+  });
+  function readMini(start, size){
+    var out = new Uint8Array(size);
+    var sct = start, pos = 0, guard = 0;
+    while (sct < 0xFFFFFFFA && pos < size && guard++ < 1e6){
+      var take = Math.min(64, size - pos);
+      out.set(miniStream.subarray(sct*64, sct*64 + take), pos);
+      pos += take; sct = miniFat[sct];
+    }
+    return out;
+  }
+  function stream(name){
+    var e = entries.filter(function(en){ return en.type === 2 && en.name === name; })[0];
+    if (!e) return null;
+    return e.size < miniCutoff ? readMini(e.start, e.size) : readChain(e.start, e.size);
+  }
+  return {stream: stream};
+}
+function crvExtract(buf){
+  var ole = oleParse(buf);
+  if (!ole) return null;
+  var vd = ole.stream('2dDataV2');
+  if (!vd) return null;
+  var ms = ole.stream('MaterialSize');
+  var mdv = ms ? new DataView(ms.buffer, ms.byteOffset, ms.byteLength) : null;
+  var stockW = mdv && ms.length >= 46 ? mdv.getFloat64(30, true) : 0;
+  var stockH = mdv && ms.length >= 46 ? mdv.getFloat64(38, true) : 0;
+  var dv = new DataView(vd.buffer, vd.byteOffset, vd.byteLength);
+  // layer markers: ff fe ff <len> utf16 strings; layer names precede their content.
+  // VCarve serializes the 'Toolpath Previews' layer first, drawing layers after.
+  var layers = [];
+  for (var si = 0; si < vd.length - 4; si++){
+    if (vd[si] === 0xFF && vd[si+1] === 0xFE && vd[si+2] === 0xFF){
+      var slen = vd[si+3];
+      if (slen >= 1 && slen <= 96 && si + 4 + slen*2 <= vd.length){
+        var txt = '', printable = true;
+        for (var sc = 0; sc < slen; sc++){
+          var ch = vd[si+4+sc*2] | (vd[si+5+sc*2] << 8);
+          if (ch < 32 || ch > 126){ printable = false; break; }
+          txt += String.fromCharCode(ch);
+        }
+        if (printable && layers.length < 2) layers.push({off: si, name: txt});
+      }
+    }
+    if (layers.length >= 2) break;
+  }
+  var drawingStart = 0;
+  if (layers.length && /toolpath/i.test(layers[0].name))
+    drawingStart = layers.length > 1 ? layers[1].off : vd.length; // previews-only file: nothing is drawing
+  var contours = [], preview = [], i = 0, L = vd.length;
+  function isHdr(o){ return o+9 <= L && (vd[o] === 0 || vd[o] === 1) && vd[o+1] === 2 && vd[o+2] === 0 && vd[o+3] === 0 && vd[o+4] === 0; }
+  while (i < L - 73){
+    var n = dv.getInt32(i, true);
+    if (n >= 2 && n <= 100000 && isHdr(i+4)){
+      var o = i + 4, spans = [], ok = true;
+      for (var k = 0; k < n; k++){
+        if (!isHdr(o) || o + 61 > L){ ok = false; break; }
+        var x = dv.getFloat64(o+9, true), y = dv.getFloat64(o+17, true);
+        if (!isFinite(x) || !isFinite(y) || Math.abs(x) > 1e5 || Math.abs(y) > 1e5){ ok = false; break; }
+        if (vd[o] === 1){
+          if (o + 69 > L){ ok = false; break; }
+          var b = dv.getFloat64(o+61, true);
+          if (!isFinite(b) || Math.abs(b) > 100){ ok = false; break; }
+          spans.push([x, y, b]); o += 69;
+        } else { spans.push([x, y, 0]); o += 61; }
+      }
+      if (ok && spans.length === n){
+        (i < drawingStart ? preview : contours).push(spans);
+        i = o; continue;
+      }
+    }
+    i++;
+  }
+  return {stockW: stockW, stockH: stockH, contours: contours, preview: preview};
+}
+function crvToDoc(ex, scale){
+  var ents = [];
+  ex.contours.forEach(function(spans){
+    var sc = spans.map(function(sp){ return [sp[0]*scale, sp[1]*scale, sp[2]]; });
+    // circle: 4 spans, uniform quarter bulge, equidistant from centroid
+    if (sc.length === 4 && sc.every(function(sp){ return Math.abs(Math.abs(sp[2]) - 0.41421356) < 1e-4; })){
+      var cx = (sc[0][0]+sc[1][0]+sc[2][0]+sc[3][0])/4;
+      var cy = (sc[0][1]+sc[1][1]+sc[2][1]+sc[3][1])/4;
+      var r = Math.hypot(sc[0][0]-cx, sc[0][1]-cy);
+      if (sc.every(function(sp){ return Math.abs(Math.hypot(sp[0]-cx, sp[1]-cy) - r) < Math.max(1e-6, r*1e-4); })){
+        ents.push({t:'circle', cx:cx, cy:cy, r:r});
+        return;
+      }
+    }
+    if (sc.every(function(sp){ return Math.abs(sp[2]) < 1e-9; })){
+      ents.push({t:'poly', pts: sc.map(function(sp){ return [sp[0], sp[1]]; }), closed:true});
+    } else {
+      ents.push({t:'path', pts: sc, closed:true});
+    }
+  });
+  return {stock:{w: Math.max(10, ex.stockW*scale), h: Math.max(10, ex.stockH*scale), origin:'corner'},
+          ents: ents, guides: []};
+}
+
 /* ---------------- persistence ---------------- */
 function persist(){
   try{ localStorage.setItem('kerfDesign', JSON.stringify(DOC)); }catch(e){}
 }
-function restore(){
+function syncStockUI(){
+  document.getElementById('stkW').value = DOC.stock.w;
+  document.getElementById('stkH').value = DOC.stock.h;
+  document.getElementById('stkOrigin').value = DOC.stock.origin;
+}
+function restore(){ // startup ONLY: pulls the persisted doc. Never call after setting DOC.
   try{
     var s = localStorage.getItem('kerfDesign');
     if (s){ var d = JSON.parse(s); if (d && d.stock) DOC = d; }
   }catch(e){}
-  document.getElementById('stkW').value = DOC.stock.w;
-  document.getElementById('stkH').value = DOC.stock.h;
-  document.getElementById('stkOrigin').value = DOC.stock.origin;
+  syncStockUI();
 }
 
 /* ---------------- rendering ---------------- */
@@ -622,7 +828,7 @@ function draw(){
   // entities
   DOC.ents.forEach(function(e,i){
     var isSel = SEL.indexOf(i) >= 0;
-    ctx.strokeStyle = isSel ? '#ffc96b' : '#dce3ea';
+    ctx.strokeStyle = isSel ? '#ffc96b' : (e.tp ? UICFG.colors.tp : UICFG.colors.vec);
     ctx.lineWidth = isSel ? 2.5 : 1.6;
     ctx.beginPath();
     if (e.t==='line'){ var p1=w2s(e.x1,e.y1), p2=w2s(e.x2,e.y2); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); }
@@ -631,6 +837,15 @@ function draw(){
     else if (e.t==='arc'){
       var ca=w2s(e.cx,e.cy);
       ctx.arc(ca.x, ca.y, e.r*VIEW.scale, -e.a0, -e.a1, e.ccw); // screen Y-flip mirrors handedness
+    }
+    else if (e.t==='path'){
+      var tp2 = e._tess2 || (e._tess2 = tessPath(e));
+      var f0 = w2s(tp2[0][0], tp2[0][1]);
+      ctx.moveTo(f0.x, f0.y);
+      for (var tq = 1; tq < tp2.length; tq++){
+        var fp = w2s(tp2[tq][0], tp2[tq][1]); ctx.lineTo(fp.x, fp.y);
+      }
+      if (e.closed) ctx.closePath();
     }
     else if (e.t==='poly'){
       var s0=w2s(e.pts[0][0],e.pts[0][1]); ctx.moveTo(s0.x,s0.y);
@@ -734,6 +949,39 @@ function draw(){
   }
 }
 
+/* ---------------- path entity (point+bulge spans) ---------------- */
+function tessPath(e, maxAng){
+  maxAng = maxAng || 0.12;
+  var pts = [], m = e.pts.length;
+  var last = e.closed ? m : m - 1;
+  for (var k = 0; k < last; k++){
+    var p0 = e.pts[k], p1 = e.pts[(k+1) % m];
+    pts.push([p0[0], p0[1]]);
+    var b = p0[2] || 0;
+    if (Math.abs(b) > 1e-9){
+      var th = 4*Math.atan(b);
+      var ch = Math.hypot(p1[0]-p0[0], p1[1]-p0[1]);
+      if (ch > 1e-9){
+        var r = ch/(2*Math.sin(Math.abs(th)/2));
+        var mx = (p0[0]+p1[0])/2, my = (p0[1]+p1[1])/2;
+        var h = Math.sqrt(Math.max(r*r - ch*ch/4, 0)) * (th > 0 ? 1 : -1);
+        var ux = (p1[0]-p0[0])/ch, uy = (p1[1]-p0[1])/ch;
+        var cx = mx - uy*h, cy = my + ux*h;
+        var a0 = Math.atan2(p0[1]-cy, p0[0]-cx), a1 = Math.atan2(p1[1]-cy, p1[0]-cx);
+        if (th > 0 && a1 < a0) a1 += 2*Math.PI;
+        if (th < 0 && a1 > a0) a1 -= 2*Math.PI;
+        var st = Math.max(2, Math.ceil(Math.abs(th)/maxAng));
+        for (var q = 1; q < st; q++){
+          var a = a0 + (a1-a0)*q/st;
+          pts.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
+        }
+      }
+    }
+  }
+  if (!e.closed) pts.push([e.pts[m-1][0], e.pts[m-1][1]]);
+  return pts;
+}
+
 /* ---------------- entity dimensions ---------------- */
 function entDims(e){
   if (e.t === 'line'){
@@ -748,6 +996,12 @@ function entDims(e){
     var L = 0;
     entityEdges(e).forEach(function(ed){ L += Math.hypot(ed[2]-ed[0], ed[3]-ed[1]); });
     return e.pts.length + ' pts  L ' + L.toFixed(2) + (e.closed ? '  closed' : '');
+  }
+  if (e.t === 'path'){
+    var tp = tessPath(e), PL = 0;
+    for (var k = 1; k < tp.length; k++) PL += Math.hypot(tp[k][0]-tp[k-1][0], tp[k][1]-tp[k-1][1]);
+    if (e.closed) PL += Math.hypot(tp[0][0]-tp[tp.length-1][0], tp[0][1]-tp[tp.length-1][1]);
+    return e.pts.length + ' spans  L ' + PL.toFixed(2) + (e.closed ? '  closed' : '');
   }
   return '';
 }
@@ -798,6 +1052,7 @@ function repPoint(e){
   if (e.t === 'line')   return {x:(e.x1+e.x2)/2, y:(e.y1+e.y2)/2};
   if (e.t === 'rect')   return {x:e.x+e.w/2, y:e.y+e.h/2};
   if (e.t === 'poly')   return {x:e.pts[0][0], y:e.pts[0][1]};
+  if (e.t === 'path')   return {x:e.pts[0][0], y:e.pts[0][1]};
   return {x:0,y:0};
 }
 function segNorm(x1,y1,x2,y2){
@@ -901,6 +1156,7 @@ function moveEntity(e, dx, dy){
   else if (e.t==='rect'){ e.x+=dx; e.y+=dy; }
   else if (e.t==='circle'){ e.cx+=dx; e.cy+=dy; }
   else if (e.t==='arc'){ e.cx+=dx; e.cy+=dy; }
+  else if (e.t==='path'){ e.pts.forEach(function(p){ p[0]+=dx; p[1]+=dy; }); e._tess = null; }
   else if (e.t==='poly'){ e.pts.forEach(function(p){ p[0]+=dx; p[1]+=dy; }); }
 }
 
@@ -919,6 +1175,7 @@ var ICON = {
  undo:'<svg viewBox="0 0 18 18"><path d="M6.5 4 L3 7.5 L6.5 11"/><path d="M3 7.5 H11 a4 4 0 0 1 0 8 H8"/></svg>',
  redo:'<svg viewBox="0 0 18 18"><path d="M11.5 4 L15 7.5 L11.5 11"/><path d="M15 7.5 H7 a4 4 0 0 0 0 8 H10"/></svg>',
  fit:'<svg viewBox="0 0 18 18"><path d="M3 6.5 V3 h3.5 M11.5 3 H15 v3.5 M15 11.5 V15 h-3.5 M6.5 15 H3 v-3.5"/></svg>',
+ neu:'<svg viewBox="0 0 18 18"><path d="M4.5 2.5 h6 l4 4 V15.5 h-10 Z"/><path d="M10.5 2.5 V6.5 h4"/></svg>',
  save:'<svg viewBox="0 0 18 18"><path d="M9 2.5 V11 M5.5 8 L9 11.5 L12.5 8"/><path d="M3 12.5 V15 h12 v-2.5"/></svg>',
  load:'<svg viewBox="0 0 18 18"><path d="M9 11.5 V3 M5.5 6 L9 2.5 L12.5 6"/><path d="M3 12.5 V15 h12 v-2.5"/></svg>'
 };
@@ -934,21 +1191,29 @@ var PANEL_BTNS = {
  undoBtn:{id:'undoBtn', icon:'undo', title:'Undo (Ctrl+Z)'},
  redoBtn:{id:'redoBtn', icon:'redo', title:'Redo (Ctrl+Y)'},
  fitBtn2:{id:'fitBtn2', icon:'fit', title:'Fit stock (F)'},
+ newBtn:{id:'newBtn', icon:'neu', title:'New — clear all vectors and guides (undoable with Ctrl+Z)'},
  saveBtn:{id:'saveBtn', icon:'save', title:'Save design as JSON (goes in your repo next to the G-code)'},
  loadBtn:{id:'loadBtn', icon:'load', title:'Load a saved design'}
 };
 var PANEL_GROUPS = [
- {id:'file',   label:'File',           btns:['saveBtn','loadBtn']},
+ {id:'file',   label:'File',           btns:['newBtn','saveBtn','loadBtn']},
  {id:'create', label:'Create Vectors', btns:['select','line','rect','circle','arc','poly']},
  {id:'guides', label:'Guides',         btns:['guide','clearGuides']},
- {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']}
+ {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']},
+ {id:'display', label:'Display', html:
+   '<div class="crow"><input type="color" id="colVec"><label for="colVec">Vectors</label></div>' +
+   '<div class="crow"><input type="color" id="colTp"><label for="colTp">Toolpath previews</label></div>'}
  /* D1.2 adds: {id:'edit', label:'Edit Vectors', btns:['fillet','trim','extend','offset',...]} */
 ];
-var UICFG = {order:null, collapsed:{}};
+var UICFG = {order:null, collapsed:{}, colors:{vec:'#dce3ea', tp:'#b87f2e'}};
 function uiCfgLoad(){
   try{
     var c = JSON.parse(localStorage.getItem('kerfDesignUI') || 'null');
-    if (c){ UICFG.order = c.order || null; UICFG.collapsed = c.collapsed || {}; }
+    if (c){
+      UICFG.order = c.order || null;
+      UICFG.collapsed = c.collapsed || {};
+      if (c.colors && c.colors.vec && c.colors.tp) UICFG.colors = c.colors;
+    }
   }catch(e){}
 }
 function uiCfgSave(){
@@ -967,8 +1232,10 @@ function buildToolPanel(){
   var html = '';
   orderedGroups().forEach(function(g){
     html += '<div class="tGroup' + (UICFG.collapsed[g.id] ? ' collapsed' : '') + '" data-group="' + g.id + '">' +
-            '<h4 draggable="true"><span class="caret">\u25bc</span>' + g.label + '<span class="grip">\u22ee\u22ee</span></h4><div class="tGrid">';
-    g.btns.forEach(function(bid){
+            '<h4 draggable="true"><span class="caret">\u25bc</span>' + g.label + '<span class="grip">\u22ee\u22ee</span></h4>';
+    if (g.html){ html += '<div class="tRows">' + g.html + '</div></div>'; return; }
+    html += '<div class="tGrid">';
+    (g.btns || []).forEach(function(bid){
       var b = PANEL_BTNS[bid];
       if (!b) return;
       html += '<button class="tool' + (b.active ? ' active' : '') + '"' +
@@ -993,6 +1260,7 @@ function buildToolPanel(){
     h.addEventListener('dragstart', function(e){
       dragging = grp.dataset.group;
       e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', 'kerf-group:' + grp.dataset.group);
     });
   });
   host.querySelectorAll('.tGroup').forEach(function(grp){
@@ -1037,6 +1305,26 @@ function wirePanel(){
   document.getElementById('undoBtn').addEventListener('click', doUndo);
   document.getElementById('redoBtn').addEventListener('click', doRedo);
   document.getElementById('fitBtn2').addEventListener('click', fit);
+  [['colVec','vec'],['colTp','tp']].forEach(function(pair){
+    var inp = document.getElementById(pair[0]);
+    if (!inp) return;
+    inp.value = UICFG.colors[pair[1]];
+    inp.addEventListener('input', function(){
+      UICFG.colors[pair[1]] = inp.value;
+      uiCfgSave();
+      draw();
+    });
+  });
+  document.getElementById('newBtn').addEventListener('click', function(){
+    if (!DOC.ents.length && !DOC.guides.length) return;
+    pushUndo();
+    DOC.ents = [];
+    DOC.guides = [];
+    SEL.length = 0;
+    setTool('select');
+    persist();
+    fit();
+  });
   document.getElementById('saveBtn').addEventListener('click', function(){
     var blob = new Blob([JSON.stringify(DOC, null, 1)], {type:'application/json'});
     var a = document.createElement('a');
@@ -1067,17 +1355,79 @@ function wire(){
     });
   });
 
-  document.getElementById('loadFile').addEventListener('change', function(e){
-    var f = e.target.files[0]; if (!f) return;
+  var IMP = {ex: null};
+  function impClose(){ document.getElementById('impModal').hidden = true; IMP.ex = null; }
+  document.getElementById('impCancel').addEventListener('click', impClose);
+  document.getElementById('impModal').addEventListener('pointerdown', function(e){
+    if (e.target === e.currentTarget) impClose();
+  });
+  document.getElementById('impGo').addEventListener('click', function(){
+    var ex = IMP.ex;
+    if (!ex) return;
+    var useD = document.getElementById('impDrawing').checked;
+    var useP = document.getElementById('impPreview').checked;
+    if (!useD && !useP){ impClose(); return; }
+    var scale = document.getElementById('impIN').checked ? 25.4 : 1;
+    pushUndo();
+    var docD = crvToDoc({stockW: ex.stockW, stockH: ex.stockH, contours: useD ? ex.contours : []}, scale);
+    var docP = crvToDoc({stockW: ex.stockW, stockH: ex.stockH, contours: useP ? ex.preview : []}, scale);
+    docP.ents.forEach(function(en){ en.tp = true; });
+    DOC = {stock: docD.stock, ents: docD.ents.concat(docP.ents), guides: []};
+    syncStockUI(); persist(); fit();
+    impClose();
+  });
+  window.addEventListener('keydown', function(e){
+    if (e.code === 'Escape' && !document.getElementById('impModal').hidden){
+      e.stopImmediatePropagation(); impClose();
+    }
+  }, true);
+
+  function importFile(f){
     var rd = new FileReader();
     rd.onload = function(){
+      var buf = rd.result;
+      var head = new Uint8Array(buf, 0, 4);
+      if (head[0] === 0xD0 && head[1] === 0xCF && head[2] === 0x11 && head[3] === 0xE0){
+        // VCarve .crv
+        try{
+          var ex = crvExtract(buf);
+          if (!ex || (!ex.contours.length && !ex.preview.length)){ alert('No vectors found in this .crv (or unsupported version).'); return; }
+          IMP.ex = ex;
+          document.getElementById('impStock').textContent =
+            'Stock ' + ex.stockW.toFixed(1) + ' x ' + ex.stockH.toFixed(1) + ' (native units)';
+          document.getElementById('impDrawingLbl').textContent = 'Drawing vectors (' + ex.contours.length + ')';
+          document.getElementById('impPreviewLbl').textContent = 'Toolpath preview vectors (' + ex.preview.length + ')';
+          document.getElementById('impDrawing').checked = ex.contours.length > 0;
+          document.getElementById('impDrawing').disabled = ex.contours.length === 0;
+          document.getElementById('impPreview').checked = false;
+          document.getElementById('impPreview').disabled = ex.preview.length === 0;
+          var inchGuess = ex.stockW > 0 && ex.stockW <= 60 && ex.stockH <= 60;
+          document.getElementById('impIN').checked = inchGuess;
+          document.getElementById('impMM').checked = !inchGuess;
+          document.getElementById('impModal').hidden = false;
+        }catch(err){ alert('.crv import failed: ' + err.message); }
+        return;
+      }
       try{
-        var d = JSON.parse(rd.result);
-        if (d && d.stock && d.ents){ pushUndo(); DOC = d; restore(); persist(); fit(); }
-      }catch(err){ alert('Not a Kerf design file.'); }
+        var d = JSON.parse(new TextDecoder().decode(buf));
+        if (d && d.stock && d.ents){ pushUndo(); DOC = d; syncStockUI(); persist(); fit(); }
+        else alert('Not a Kerf design file.');
+      }catch(err2){ alert('Not a Kerf design or .crv file.'); }
     };
-    rd.readAsText(f);
+    rd.readAsArrayBuffer(f);
+  }
+  document.getElementById('loadFile').addEventListener('change', function(e){
+    var f = e.target.files[0]; if (!f) return;
+    importFile(f);
     e.target.value = '';
+  });
+  // window-level drop: swallow strays (fixes the file:// self-load console error
+  // from panel drags ending outside a drop zone) and enable drop-to-import
+  window.addEventListener('dragover', function(e){ e.preventDefault(); });
+  window.addEventListener('drop', function(e){
+    e.preventDefault();
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) importFile(f);
   });
 
   // canvas interactions
@@ -1209,7 +1559,11 @@ function wire(){
 
   new ResizeObserver(function(){ draw(); }).observe(cv);
 }
-document.addEventListener('DOMContentLoaded', wire);
+document.addEventListener('DOMContentLoaded', function(){
+  wire();
+  document.getElementById('verSub').textContent = 'precision 2D sketcher — v' + DESIGN_VERSION;
+  document.title = 'Kerf Design v' + DESIGN_VERSION;
+});
 </script>
 </body>
 </html>
