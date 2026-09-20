@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kerf Design · precision 2D sketcher</title>
+<title>454 Design · precision 2D sketcher</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -88,10 +88,10 @@
 <body>
 <div id="app">
   <header>
-    <div class="brand">Kerf<span> Design</span></div>
+    <div class="brand">454<span> Design</span></div>
     <div class="sub" id="verSub">precision 2D sketcher</div>
     <div class="spacer"></div>
-    <a id="openControl" href="index.html" title="Open Kerf Control (the machine sender)">Kerf Control ↗</a>
+    <a id="openControl" href="index.html" title="Open 454 Control (the machine sender)">454 Control ↗</a>
     <button id="settingsBtn" title="Settings — stock size, display colors">⚙ Settings</button>
     <input type="file" id="loadFile" accept=".json,.crv,.dxf" hidden>
   </header>
@@ -111,7 +111,7 @@
           <option value="center">center of stock</option>
         </select>
       </div>
-      <p class="snote">Match this to where you set X0 Y0 on the machine in Kerf Control.</p>
+      <p class="snote">Match this to where you set X0 Y0 on the machine in 454 Control.</p>
       <h4>Display colors</h4>
       <div class="srow"><input type="color" id="colVec"><label for="colVec">Vectors</label></div>
       <div class="srow"><input type="color" id="colTp"><label for="colTp">Toolpath previews</label></div>
@@ -166,9 +166,9 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.23.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.24.0'; // bump on every build — shown in the header
 /* ============================================================
-   Kerf Design v0.1 — geometry model
+   454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
              {t:'rect',x,y,w,h}   {t:'poly',pts:[[x,y],...],closed}
    Guides:   {t:'gline',a,b,c}  (ax+by=c, normalized)  — construction only
@@ -1290,7 +1290,7 @@ function dxfToDoc(ex, scale, toOrigin, keepStock){
 
 /* ---------------- persistence ---------------- */
 function persist(){
-  try{ localStorage.setItem('kerfDesign', JSON.stringify(DOC)); }catch(e){}
+  try{ localStorage.setItem('d454Design', JSON.stringify(DOC)); }catch(e){}
 }
 function syncStockUI(){
   document.getElementById('stkW').value = DOC.stock.w;
@@ -1299,7 +1299,7 @@ function syncStockUI(){
 }
 function restore(){ // startup ONLY: pulls the persisted doc. Never call after setting DOC.
   try{
-    var s = localStorage.getItem('kerfDesign');
+    var s = localStorage.getItem('d454Design') || localStorage.getItem('kerfDesign'); // fallback: pre-rename work
     if (s){ var d = JSON.parse(s); if (d && d.stock) DOC = d; }
   }catch(e){}
   syncStockUI();
@@ -2785,7 +2785,7 @@ var PANEL_GROUPS = [
 var UICFG = {order:null, collapsed:{}, colors:{vec:'#dce3ea', tp:'#b87f2e', con:'#6b8cae'}, filletR:3};
 function uiCfgLoad(){
   try{
-    var c = JSON.parse(localStorage.getItem('kerfDesignUI') || 'null');
+    var c = JSON.parse(localStorage.getItem('d454DesignUI') || localStorage.getItem('kerfDesignUI') || 'null');
     if (c){
       UICFG.order = c.order || null;
       UICFG.collapsed = c.collapsed || {};
@@ -2796,7 +2796,7 @@ function uiCfgLoad(){
   }catch(e){}
 }
 function uiCfgSave(){
-  try{ localStorage.setItem('kerfDesignUI', JSON.stringify(UICFG)); }catch(e){}
+  try{ localStorage.setItem('d454DesignUI', JSON.stringify(UICFG)); }catch(e){}
 }
 function orderedGroups(){
   if (!UICFG.order) return PANEL_GROUPS.slice();
@@ -2906,7 +2906,7 @@ function wirePanel(){
     var blob = new Blob([JSON.stringify(DOC, null, 1)], {type:'application/json'});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'design.kerf.json';
+    a.download = 'design.454.json';
     a.click();
   });
   document.getElementById('loadBtn').addEventListener('click', function(){
@@ -3052,8 +3052,8 @@ function wire(){
       try{
         var d = JSON.parse(txt2);
         if (d && d.stock && d.ents){ pushUndo(); DOC = d; syncStockUI(); persist(); fit(); }
-        else alert('Not a Kerf design file.');
-      }catch(err2){ alert('Not a Kerf design, .crv, or .dxf file.'); }
+        else alert('Not a 454 Design file.');
+      }catch(err2){ alert('Not a 454 Design, .crv, or .dxf file.'); }
     };
     rd.readAsArrayBuffer(f);
   }
@@ -3278,7 +3278,7 @@ function wire(){
 document.addEventListener('DOMContentLoaded', function(){
   wire();
   document.getElementById('verSub').textContent = 'precision 2D sketcher — v' + DESIGN_VERSION;
-  document.title = 'Kerf Design v' + DESIGN_VERSION;
+  document.title = '454 Design v' + DESIGN_VERSION;
 });
 </script>
 </body>
