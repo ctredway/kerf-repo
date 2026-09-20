@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.19'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.20'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2860,8 +2860,23 @@ function wire(){
 
   // prompt input
   var pin = document.getElementById('promptIn');
+  // Fillet radius arms live as you type — no Enter needed. Other tools still commit on Enter
+  // (they need a completed value: coordinates, counts, sweeps). For fillet the field is just the
+  // standing radius, so every keystroke that parses to a positive number updates it immediately.
+  pin.addEventListener('input', function(){
+    if (TOOL !== 'fillet') return;
+    var v = parseFloat(pin.value);
+    if (!isNaN(v) && v > 0 && isFinite(v) && v <= 10000){
+      UICFG.filletR = v;
+      uiCfgSave();
+    }
+  });
   pin.addEventListener('keydown', function(e){
-    if (e.key === 'Enter'){ toolCommitText(pin.value); pin.value=''; }
+    if (e.key === 'Enter'){
+      // fillet already armed live via 'input'; just tidy the field and keep the tool active
+      if (TOOL === 'fillet'){ pin.value = ''; stagePrompt('fillet0'); e.stopPropagation(); return; }
+      toolCommitText(pin.value); pin.value='';
+    }
     if (e.key === 'Escape'){
       pin.value = ''; pin.blur();
       if (DRAW){ DRAW = null; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); }
