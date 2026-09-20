@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.15'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.16'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -1752,20 +1752,18 @@ function filletPathVertex(pe, vi, r){
   // foot of the fillet onto a span's curve; for arcs the foot may be off the stored sub-span but
   // must stay within maxArc radians of the corner (keeps the fillet local, never wraps a lobe)
   var maxArc = Math.PI * 0.6;
-  // cornerAtB: true if the corner vertex P is this curve's END (b for a line, a1 for an arc going
-  // into P). The tangent may overshoot slightly PAST the corner (the fillet trims into it) but not
-  // past the curve's far end.
-  function footOn(curve, O, cornerAtEnd){
-    if (curve.kind === 'line'){
-      var dx = curve.bx-curve.ax, dy = curve.by-curve.ay, L2 = dx*dx+dy*dy;
-      if (L2 < 1e-18) return null;
-      var t = ((O.x-curve.ax)*dx + (O.y-curve.ay)*dy) / L2;
-      // corner side allows overshoot toward the corner; far side is hard-bounded
-      var loOK = cornerAtEnd ? (t > -1e-3) : (t > -0.35);
-      var hiOK = cornerAtEnd ? (t < 1.35)  : (t < 1+1e-3);
-      if (!loOK || !hiOK) return null;
-      return {x:curve.ax + dx*t, y:curve.ay + dy*t};
-    }
+  // Tangent foot must lie on the span, with only a hair of tolerance — NO large corner overshoot
+  // (overshoot let the solver pick a center whose line-tangent sits past the corner on the wrong
+  // side, producing a fillet that crosses back over the corner). A tiny epsilon absorbs rounding.
+  var EPS = 1e-3;
+  function footOnLine(curve, O){
+    var dx = curve.bx-curve.ax, dy = curve.by-curve.ay, L2 = dx*dx+dy*dy;
+    if (L2 < 1e-18) return null;
+    var t = ((O.x-curve.ax)*dx + (O.y-curve.ay)*dy) / L2;
+    if (t < -EPS || t > 1+EPS) return null;
+    return {x:curve.ax + dx*t, y:curve.ay + dy*t};
+  }
+  function footOnArc(curve, O){
     var d = Math.hypot(O.x-curve.cx, O.y-curve.cy);
     if (d < 1e-9) return null;
     var F = {x:curve.cx + (O.x-curve.cx)*curve.R/d, y:curve.cy + (O.y-curve.cy)*curve.R/d};
@@ -1774,15 +1772,17 @@ function filletPathVertex(pe, vi, r){
     if (Math.abs(angNorm(aF-aP+Math.PI)-Math.PI) > maxArc) return null;
     return F;
   }
-  // cIn ends AT the corner (P is its .b / far vertex is iPrev); cOut starts at the corner.
+  function footOn(curve, O){ return curve.kind === 'line' ? footOnLine(curve, O) : footOnArc(curve, O); }
+  // Among centers that are inside the profile AND tangent to both spans strictly on-segment,
+  // choose the one nearest the corner. Strict on-segment tangency is what rejects the wrong-side
+  // (off-bridge) solutions; it naturally selects the correct convex/concave fillet.
   var best = null;
   filletCenters(cIn, cOut, r).forEach(function(O){
     if (pe.closed && !insideProfile(O)) return;
-    var T1 = footOn(cIn, O, true);    // corner is the END of the incoming span
-    var T2 = footOn(cOut, O, false);  // corner is the START of the outgoing span
+    var T1 = footOn(cIn, O), T2 = footOn(cOut, O);
     if (!T1 || !T2) return;
-    var score = Math.hypot(T1.x-P.x, T1.y-P.y) + Math.hypot(T2.x-P.x, T2.y-P.y);
-    if (!best || score < best.score) best = {O:O, T1:T1, T2:T2, score:score};
+    var d = Math.hypot(O.x-P.x, O.y-P.y);
+    if (!best || d < best.d) best = {O:O, T1:T1, T2:T2, d:d};
   });
   if (!best) return null;
 
