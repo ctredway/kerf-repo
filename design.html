@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.3'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.4'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2016,10 +2016,17 @@ function fragOf(e){
   if (e.t === 'line') return [[e.x1,e.y1,0],[e.x2,e.y2,0]];
   if (e.t === 'arc'){
     var sw = arcSweepOf(e.a0, e.a1, e.ccw);
-    if (sw >= 2*Math.PI - 1e-9) return null;
-    var q0 = arcPtAt(e, 0), q1 = arcPtAt(e, sw);
-    var b = Math.tan(sw/4) * (e.ccw ? 1 : -1);
-    return [[q0.x,q0.y,b],[q1.x,q1.y,0]];
+    if (sw >= 2*Math.PI - 1e-9) return null; // full circle: can't be an open fragment
+    // split into <=90-degree sub-spans so each bulge is small and unambiguous
+    var segs = Math.max(1, Math.ceil(sw / (Math.PI/2)));
+    var subSweep = sw / segs;
+    var subBulge = Math.tan(subSweep/4) * (e.ccw ? 1 : -1);
+    var out = [];
+    for (var i = 0; i <= segs; i++){
+      var q = arcPtAt(e, subSweep*i);
+      out.push([q.x, q.y, i < segs ? subBulge : 0]);
+    }
+    return out;
   }
   if (e.t === 'poly' && !e.closed) return e.pts.map(function(pt){ return [pt[0],pt[1],0]; });
   if (e.t === 'path' && !e.closed) return e.pts.map(function(pt){ return [pt[0],pt[1],pt[2]||0]; });
@@ -2175,17 +2182,17 @@ function tessPath(e, maxAng){
     pts.push([p0[0], p0[1]]);
     var b = p0[2] || 0;
     if (Math.abs(b) > 1e-9){
-      var th = 4*Math.atan(b);
+      var th = 4*Math.atan(b);            // signed sweep; |th| may exceed PI for legacy data
       var ch = Math.hypot(p1[0]-p0[0], p1[1]-p0[1]);
       if (ch > 1e-9){
-        var r = ch/(2*Math.sin(Math.abs(th)/2));
+        var r = ch/(2*Math.abs(Math.sin(th/2)));
+        // center is offset from chord midpoint by the sagitta complement, on the side set by sweep sign;
+        // for |th|>PI the center sits on the far side, which cos(th/2) sign handles automatically.
+        var d = r * Math.cos(th/2);        // signed: negative when |th|>PI, flipping the center correctly
         var mx = (p0[0]+p1[0])/2, my = (p0[1]+p1[1])/2;
-        var h = Math.sqrt(Math.max(r*r - ch*ch/4, 0)) * (th > 0 ? 1 : -1);
         var ux = (p1[0]-p0[0])/ch, uy = (p1[1]-p0[1])/ch;
-        var cx = mx - uy*h, cy = my + ux*h;
-        var a0 = Math.atan2(p0[1]-cy, p0[0]-cx), a1 = Math.atan2(p1[1]-cy, p1[0]-cx);
-        if (th > 0 && a1 < a0) a1 += 2*Math.PI;
-        if (th < 0 && a1 > a0) a1 -= 2*Math.PI;
+        var cx = mx - uy*d, cy = my + ux*d;
+        var a0 = Math.atan2(p0[1]-cy, p0[0]-cx), a1 = a0 + th;
         var st = Math.max(2, Math.ceil(Math.abs(th)/maxAng));
         for (var q = 1; q < st; q++){
           var a = a0 + (a1-a0)*q/st;
