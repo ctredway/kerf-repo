@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.22'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.22.0'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -378,16 +378,102 @@ function stagePrompt(key){
   if (txt.indexOf('{R}') >= 0) txt = txt.replace('{R}', UICFG.filletR);
   showPrompt(txt, '');
 }
-function setTool(t){
-  TOOL = t; DRAW = null;
-  if (!/^(copy|mirror|rotate|array|offset)$/.test(t)) SEL = [];
+/* ============================================================
+   TOOL MANAGER  (state machine)
+   One place owns the active tool and every transition. Tools declare a
+   descriptor; the manager drives enter/exit/hover/click/text uniformly so
+   state (focus, prompt, DRAW, selection) can never leak between tools.
+   ============================================================ */
+var TOOLS = {
+  // kind: 'create' (draws new geometry), 'edit' (acts on existing, gives check/X hover),
+  //       'transform' (acts on a selection), 'select'
+  select:{kind:'select', prompt:null, keepSel:true},
+  line:  {kind:'create', prompt:'line0'},
+  rect:  {kind:'create', prompt:'rect0'},
+  circle:{kind:'create', prompt:'circle0'},
+  poly:  {kind:'create', prompt:'poly0'},
+  arc:   {kind:'create', prompt:'arc0'},
+  guide: {kind:'create', prompt:'guide0'},
+  fillet:{kind:'edit',   prompt:'fillet0', hover:hoverFillet},
+  trim:  {kind:'edit',   prompt:'trim0',   hover:hoverTrim},
+  extend:{kind:'edit',   prompt:'extend0', hover:hoverExtend},
+  offset:{kind:'transform', prompt:'offset0', keepSel:true},
+  copy:  {kind:'transform', prompt:'copy0',   keepSel:true},
+  mirror:{kind:'transform', prompt:'mirror0', keepSel:true},
+  rotate:{kind:'transform', prompt:'rotate0', keepSel:true},
+  array: {kind:'transform', prompt:'array0',  keepSel:true}
+};
+// HOVER STATUS: each edit tool interrogates the geometry under the cursor and returns
+// {action:'do'|'undo'|'none', hint?, preview?} so the cursor can show check / X / neutral,
+// exactly like VCarve. These NEVER mutate — they only report what a click would do.
+function hoverFillet(w){
+  // is the cursor near a corner that can be filleted (or an already-filleted arc to remove)?
+  var tol = 10/VIEW.scale;
+  for (var i = 0; i < DOC.ents.length; i++){
+    var e = DOC.ents[i], pe = null;
+    if (e.t === 'poly') pe = polyToPath(e);
+    else if (e.t === 'path') pe = e;
+    else if (e.t === 'rect') pe = rectToPath(e);
+    if (!pe) continue;
+    for (var vi = 0; vi < pe.pts.length; vi++){
+      if (Math.hypot(w.x-pe.pts[vi][0], w.y-pe.pts[vi][1]) < tol){
+        var ne = filletPathVertex(pe, vi, UICFG.filletR);
+        return ne ? {action:'do', hint:'fillet R'+UICFG.filletR, at:{x:pe.pts[vi][0],y:pe.pts[vi][1]}}
+                  : {action:'none', hint:'radius too large here', at:{x:pe.pts[vi][0],y:pe.pts[vi][1]}};
+      }
+    }
+  }
+  // two-line corner?
+  var near = [];
+  DOC.ents.forEach(function(e2, i2){
+    if (e2.t !== 'line') return;
+    var d = distToSeg(w.x, w.y, e2.x1, e2.y1, e2.x2, e2.y2);
+    if (d < tol*1.6) near.push(d);
+  });
+  if (near.length >= 2) return {action:'do', hint:'fillet R'+UICFG.filletR};
+  return {action:'none'};
+}
+function hoverTrim(w){
+  var idx = pickEntity(w);
+  if (idx === null) return {action:'none'};
+  var e = DOC.ents[idx];
+  if (e.t === 'line' || e.t === 'circle' || e.t === 'arc') return {action:'do', hint:'trim', idx:idx};
+  return {action:'none', hint:'trim needs a line, arc or circle'};
+}
+function hoverExtend(w){
+  var idx = pickEntity(w);
+  if (idx === null) return {action:'none'};
+  var e = DOC.ents[idx];
+  if (e.t === 'line' || e.t === 'arc') return {action:'do', hint:'extend', idx:idx};
+  return {action:'none', hint:'extend needs a line or arc'};
+}
+var HOVER = null; // last computed hover status, for cursor feedback in draw()
+
+function toolMgrEnter(t){
+  var desc = TOOLS[t] || TOOLS.select;
+  // clean slate: no leftover in-progress geometry, no stolen focus, field cleared
+  DRAW = null;
   var pinEl = document.getElementById('promptIn');
   if (pinEl){ pinEl.value = ''; pinEl.blur(); }
   hidePrompt();
-  if (t !== 'select') stagePrompt(t + '0');
+  // selection policy: create/select/edit tools drop selection; transforms keep it
+  if (!desc.keepSel) SEL = [];
+  HOVER = null;
+  if (desc.prompt) stagePrompt(desc.prompt);
+  // reflect in the panel
   document.querySelectorAll('#toolPanel .tool[data-tool]').forEach(function(b){
     b.classList.toggle('active', b.dataset.tool === t);
   });
+}
+function toolMgrHover(w){
+  var desc = TOOLS[TOOL];
+  HOVER = (desc && desc.hover) ? desc.hover(w) : null;
+}
+
+function setTool(t){
+  if (!TOOLS[t]) t = 'select';
+  TOOL = t;
+  toolMgrEnter(t);
   draw();
 }
 function toolClick(w, snap){
@@ -1379,6 +1465,45 @@ function draw(){
     ctx.lineWidth = 1.5;
     ctx.strokeRect(sm.x-4, sm.y-4, 8, 8);
   }
+  // edit-tool hover feedback: check (can act) / X (cannot), VCarve-style, at the cursor
+  var hd = TOOLS[TOOL];
+  if (hd && hd.kind === 'edit' && HOVER && MOUSE.mx != null){
+    var gx = MOUSE.mx + 14, gy = MOUSE.my - 14;
+    // highlight the affected entity for trim/extend
+    if (HOVER.action === 'do' && HOVER.idx != null && DOC.ents[HOVER.idx]){
+      ctx.save();
+      ctx.strokeStyle = '#7fb069'; ctx.lineWidth = 3; ctx.globalAlpha = 0.5;
+      drawEntityOutline(DOC.ents[HOVER.idx]);
+      ctx.restore();
+    }
+    // fillet corner marker
+    if (HOVER.at){
+      var ap = w2s(HOVER.at.x, HOVER.at.y);
+      ctx.save();
+      ctx.strokeStyle = HOVER.action === 'do' ? '#7fb069' : '#e06c5a';
+      ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(ap.x, ap.y, 7, 0, Math.PI*2); ctx.stroke();
+      ctx.restore();
+    }
+    // glyph
+    ctx.save();
+    ctx.font = 'bold 15px sans-serif'; ctx.textBaseline = 'middle';
+    if (HOVER.action === 'do'){
+      ctx.fillStyle = '#7fb069'; ctx.fillText('\u2713', gx, gy);   // check
+    } else {
+      ctx.fillStyle = '#e06c5a'; ctx.fillText('\u2717', gx, gy);   // X
+    }
+    ctx.restore();
+  }
+}
+// stroke just the outline path of an entity (no fill), in the CURRENT ctx style
+function drawEntityOutline(e){
+  ctx.beginPath();
+  if (e.t === 'line'){ var a=w2s(e.x1,e.y1), b=w2s(e.x2,e.y2); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); }
+  else if (e.t === 'rect'){ var r1=w2s(e.x,e.y+e.h), r2=w2s(e.x+e.w,e.y); ctx.rect(r1.x,r1.y,r2.x-r1.x,r2.y-r1.y); }
+  else if (e.t === 'circle'){ var c=w2s(e.cx,e.cy); ctx.arc(c.x,c.y,e.r*VIEW.scale,0,Math.PI*2); }
+  else if (e.t === 'arc'){ var ca=w2s(e.cx,e.cy); ctx.arc(ca.x,ca.y,e.r*VIEW.scale,-e.a0,-e.a1,e.ccw); }
+  else if (e.pts){ var tp=(e.t==='path')?tessPath(e):e.pts.map(function(q){return [q[0],q[1]];}); var f=w2s(tp[0][0],tp[0][1]); ctx.moveTo(f.x,f.y); for(var i=1;i<tp.length;i++){var q=w2s(tp[i][0],tp[i][1]); ctx.lineTo(q.x,q.y);} if(e.closed)ctx.closePath(); }
+  ctx.stroke();
 }
 
 /* ---------------- two-point arc construction ---------------- */
@@ -2807,6 +2932,7 @@ function wire(){
     }
     var w = s2w(MOUSE.mx, MOUSE.my);
     MOUSE.snap = resolveSnap(w);
+    toolMgrHover(w);   // edit tools compute check/X status for the geometry under the cursor
     // marquee
     if (TOOL==='select' && DRAW && DRAW.stage==='marq' && (e.buttons & 1)){
       DRAW.ex = w.x; DRAW.ey = w.y;
