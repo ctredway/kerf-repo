@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.16'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.17'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -1773,16 +1773,17 @@ function filletPathVertex(pe, vi, r){
     return F;
   }
   function footOn(curve, O){ return curve.kind === 'line' ? footOnLine(curve, O) : footOnArc(curve, O); }
-  // Among centers that are inside the profile AND tangent to both spans strictly on-segment,
-  // choose the one nearest the corner. Strict on-segment tangency is what rejects the wrong-side
-  // (off-bridge) solutions; it naturally selects the correct convex/concave fillet.
+  // The correct fillet — convex OR concave — is the one whose two tangent points hug the corner:
+  // both feet land right at P. Wrong-side solutions put at least one foot far around the arc or
+  // off along the line. So among strictly on-segment tangent candidates, minimise the SUM of the
+  // two tangent-foot distances to the corner. This needs no convex/concave test and no inside
+  // filter (the inside filter was backwards for concave/reentrant corners).
   var best = null;
   filletCenters(cIn, cOut, r).forEach(function(O){
-    if (pe.closed && !insideProfile(O)) return;
     var T1 = footOn(cIn, O), T2 = footOn(cOut, O);
     if (!T1 || !T2) return;
-    var d = Math.hypot(O.x-P.x, O.y-P.y);
-    if (!best || d < best.d) best = {O:O, T1:T1, T2:T2, d:d};
+    var footDist = Math.hypot(T1.x-P.x, T1.y-P.y) + Math.hypot(T2.x-P.x, T2.y-P.y);
+    if (!best || footDist < best.footDist) best = {O:O, T1:T1, T2:T2, footDist:footDist};
   });
   if (!best) return null;
 
