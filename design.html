@@ -128,7 +128,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.14.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.20.0'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -346,15 +346,34 @@ var STAGE_LABEL = {
   circle1:'Circle \u2014 click radius point, or type "D5" / "R2.5"',
   poly0:  'Polyline \u2014 click first point, or type "x,y"',
   poly1:  'Polyline \u2014 next point ("@dx,dy" / "50<45" ok) \u00b7 Enter finishes \u00b7 click start closes',
-  arc0:   'Arc \u2014 click center, or type "x,y"',
-  arc1:   'Arc \u2014 click start point, or type "10<0" (radius 10 at 0\u00b0) / "x,y"',
-  arc2:   'Arc \u2014 click end point (CCW), or type sweep\u00b0: "90" CCW, "-90" CW',
+  offset0:'Offset \u2014 select or click shapes, then type the distance: "+2" outward copy, "-1.5" inward',
+  copy0:  'Copy \u2014 click base point, or type the offset "@dx,dy"',
+  copy1:  'Copy \u2014 click destination, or type "x,y" / "@dx,dy"',
+  mirror0:'Mirror \u2014 H = left\u2194right copy, V = up\u2195down copy \u00b7 HH/VV = flip in place \u00b7 click a construction line to mirror across it \u00b7 or click 2 points of the axis',
+  mirror1:'Mirror \u2014 click the second point of the axis (mirrored copy)',
+  rotate0:'Rotate \u2014 click the rotation center, or type "x,y"',
+  rotate1:'Rotate \u2014 type the angle in degrees (+ CCW, \u2212 CW)',
+  array0: 'Array \u2014 type "N@dx,dy" (linear, e.g. 5@12,0), or click a center for a circular array',
+  array1: 'Array \u2014 type "N<step\u00b0" (e.g. 6<60) around the clicked center',
+  selFirst:'Select something first \u2014 press V, click entities (shift adds), then pick the transform',
+  fillet0:'Fillet \u2014 radius R{R} \u00b7 click a corner (poly/rect corner, or two meeting lines) \u00b7 type a new radius anytime',
+  trim0:  'Trim \u2014 click the piece to remove (lines, arcs, circles); crossings bound the cut',
+  extend0:'Extend \u2014 click near the end of a line or arc to run it to the next crossing',
+  editMiss:'Nothing there \u2014 click a corner (fillet) or a line/arc/circle (trim, extend)',
+  arc0:   'Arc \u2014 click start point, or type "x,y"',
+  arc1:   'Arc \u2014 click end point, or type "x,y" / "@dx,dy" / "10<45"',
+  arc2:   'Arc \u2014 move to bow the arc, click to place \u00b7 or type radius ("+" bows left of start\u2192end, "\u2212" right)',
   guide0: 'Guide \u2014 click an edge (stock or drawing) to offset from',
   guideOffset: 'Guide \u2014 offset from that edge in mm (negative = other side)'
 };
-function stagePrompt(key){ showPrompt(STAGE_LABEL[key] || '', ''); }
+function stagePrompt(key){
+  var txt = STAGE_LABEL[key] || '';
+  if (txt.indexOf('{R}') >= 0) txt = txt.replace('{R}', UICFG.filletR);
+  showPrompt(txt, '');
+}
 function setTool(t){
-  TOOL = t; DRAW = null; SEL = [];
+  TOOL = t; DRAW = null;
+  if (!/^(copy|mirror|rotate|array|offset)$/.test(t)) SEL = [];
   hidePrompt();
   if (t !== 'select') stagePrompt(t + '0');
   document.querySelectorAll('#toolPanel .tool[data-tool]').forEach(function(b){
@@ -395,17 +414,78 @@ function toolClick(w, snap){
     }
   }
   else if (TOOL === 'arc'){
-    if (!DRAW){ DRAW = {stage:1, cx:p.x, cy:p.y}; stagePrompt('arc1'); }
+    if (!DRAW){ DRAW = {stage:1, ax:p.x, ay:p.y}; stagePrompt('arc1'); }
     else if (DRAW.stage === 1){
-      DRAW.r = Math.hypot(p.x-DRAW.cx, p.y-DRAW.cy);
-      if (DRAW.r > 1e-6){ DRAW.a0 = angTo(DRAW.cx, DRAW.cy, p); DRAW.stage = 2; stagePrompt('arc2'); }
+      if (Math.hypot(p.x-DRAW.ax, p.y-DRAW.ay) > 1e-6){
+        DRAW.bx = p.x; DRAW.by = p.y; DRAW.stage = 2; stagePrompt('arc2');
+      }
     }
     else {
-      var a1 = angTo(DRAW.cx, DRAW.cy, p);
-      pushUndo();
-      DOC.ents.push({t:'arc', cx:DRAW.cx, cy:DRAW.cy, r:DRAW.r, a0:DRAW.a0, a1:a1, ccw:true});
-      DRAW = null; stagePrompt('arc0'); persist();
+      var g = arcFrom3({x:DRAW.ax,y:DRAW.ay}, {x:DRAW.bx,y:DRAW.by}, p);
+      if (g){
+        pushUndo();
+        DOC.ents.push({t:'arc', cx:g.cx, cy:g.cy, r:g.r, a0:g.a0, a1:g.a1, ccw:g.ccw});
+        DRAW = null; stagePrompt('arc0'); persist();
+      }
     }
+  }
+  else if (TOOL === 'offset'){
+    var oh = pickEntity(w);
+    if (oh !== null){
+      if (MOUSE.shift) selToggle(oh);
+      else SEL = [oh];
+    } else if (!MOUSE.shift) SEL = [];
+  }
+  else if (TOOL === 'copy'){
+    if (!SEL.length){ stagePrompt('selFirst'); }
+    else if (!DRAW){ DRAW = {stage:1, bx:p.x, by:p.y}; stagePrompt('copy1'); }
+    else {
+      applySel(true, (function(dx,dy){ return function(en){ moveEntity(en, dx, dy); }; })(p.x-DRAW.bx, p.y-DRAW.by));
+      DRAW = null; stagePrompt('copy0'); persist();
+    }
+  }
+  else if (TOOL === 'mirror'){
+    if (!SEL.length){ stagePrompt('selFirst'); }
+    else if (!DRAW){
+      var mh = pickEntity(w);
+      if (mh !== null && DOC.ents[mh].t === 'line' && DOC.ents[mh].con && SEL.indexOf(mh) < 0){
+        var cl = DOC.ents[mh];
+        var cvx = cl.x2-cl.x1, cvy = cl.y2-cl.y1, cvl = Math.hypot(cvx,cvy);
+        if (cvl > 1e-6){
+          applySel(true, (function(px2,py2,ux2,uy2){ return function(en){ mirrorEnt(en, px2, py2, ux2, uy2); }; })(cl.x1, cl.y1, cvx/cvl, cvy/cvl));
+          stagePrompt('mirror0'); persist();
+          return;
+        }
+      }
+      DRAW = {stage:1, ax:p.x, ay:p.y}; stagePrompt('mirror1');
+    }
+    else {
+      var mvx = p.x-DRAW.ax, mvy = p.y-DRAW.ay, mvl = Math.hypot(mvx,mvy);
+      if (mvl > 1e-6){
+        applySel(true, (function(px2,py2,ux2,uy2){ return function(en){ mirrorEnt(en, px2, py2, ux2, uy2); }; })(DRAW.ax, DRAW.ay, mvx/mvl, mvy/mvl));
+        DRAW = null; stagePrompt('mirror0'); persist();
+      }
+    }
+  }
+  else if (TOOL === 'rotate'){
+    if (!SEL.length){ stagePrompt('selFirst'); }
+    else if (!DRAW){ DRAW = {stage:1, cx:p.x, cy:p.y}; stagePrompt('rotate1'); }
+  }
+  else if (TOOL === 'array'){
+    if (!SEL.length){ stagePrompt('selFirst'); }
+    else if (!DRAW){ DRAW = {stage:1, cx:p.x, cy:p.y}; stagePrompt('array1'); }
+  }
+  else if (TOOL === 'fillet'){
+    if (doFillet(w, UICFG.filletR)){ persist(); stagePrompt('fillet0'); }
+    else stagePrompt('editMiss');
+  }
+  else if (TOOL === 'trim'){
+    if (doTrim(w)){ persist(); stagePrompt('trim0'); }
+    else stagePrompt('editMiss');
+  }
+  else if (TOOL === 'extend'){
+    if (doExtend(w)){ persist(); stagePrompt('extend0'); }
+    else stagePrompt('editMiss');
   }
   else if (TOOL === 'guide'){
     var e = pickEdge(w);
@@ -422,13 +502,15 @@ function toolClick(w, snap){
   }
   else if (TOOL === 'select'){
     var hit = pickEntity(w);
-    if (MOUSE.shift){
-      if (hit !== null) selToggle(hit);
+    if (hit !== null){
+      if (MOUSE.shift){ selToggle(hit); }
+      else if (SEL.indexOf(hit) < 0){ SEL = [hit]; } // clicking a selected member keeps the group
+      if (SEL.indexOf(hit) >= 0)
+        DRAW = {stage:'drag', lx:p.x, ly:p.y, moved:false, pushed:false};
     } else {
-      SEL = hit !== null ? [hit] : [];
+      // empty space: begin a marquee; click-vs-drag (and any deselect) resolves on pointerup
+      DRAW = {stage:'marq', sx:w.x, sy:w.y, ex:w.x, ey:w.y, shift:MOUSE.shift};
     }
-    if (hit !== null && SEL.indexOf(hit) >= 0)
-      DRAW = {stage:'drag', lx:p.x, ly:p.y, moved:false, pushed:false};
   }
   draw();
 }
@@ -493,37 +575,135 @@ function toolCommitText(txt){
   if (TOOL === 'arc'){
     if (!DRAW){
       var pa = parseNumericPoint(txt, null);
-      if (pa){ DRAW = {stage:1, cx:pa.x, cy:pa.y}; stagePrompt('arc1'); draw(); }
+      if (pa){ DRAW = {stage:1, ax:pa.x, ay:pa.y}; stagePrompt('arc1'); draw(); }
       return;
     }
     if (DRAW.stage === 1){
-      var ps = parseNumericPoint(txt, {x:DRAW.cx, y:DRAW.cy}); // "10<0" lands at R10 0° from center
-      if (ps){
-        DRAW.r = Math.hypot(ps.x-DRAW.cx, ps.y-DRAW.cy);
-        if (DRAW.r > 1e-6){ DRAW.a0 = angTo(DRAW.cx, DRAW.cy, ps); DRAW.stage = 2; stagePrompt('arc2'); draw(); }
+      var pb = parseNumericPoint(txt, {x:DRAW.ax, y:DRAW.ay}); // "@dx,dy" and "10<45" relative to start
+      if (pb && Math.hypot(pb.x-DRAW.ax, pb.y-DRAW.ay) > 1e-6){
+        DRAW.bx = pb.x; DRAW.by = pb.y; DRAW.stage = 2; stagePrompt('arc2'); draw();
       }
       return;
     }
     if (DRAW.stage === 2){
-      var pe = parseNumericPoint(txt, {x:DRAW.cx, y:DRAW.cy});
-      if (pe){
-        pushUndo();
-        DOC.ents.push({t:'arc', cx:DRAW.cx, cy:DRAW.cy, r:DRAW.r, a0:DRAW.a0,
-                       a1:angTo(DRAW.cx, DRAW.cy, pe), ccw:true});
-        DRAW = null; stagePrompt('arc0'); persist(); draw();
-        return;
-      }
-      var sw = parseFloat(txt);
-      if (!isNaN(sw) && Math.abs(sw) > 1e-6){
-        pushUndo();
-        var rad = Math.abs(sw)*Math.PI/180;
-        var ccw = sw > 0;
-        DOC.ents.push({t:'arc', cx:DRAW.cx, cy:DRAW.cy, r:DRAW.r, a0:DRAW.a0,
-                       a1:DRAW.a0 + (ccw ? rad : -rad), ccw:ccw});
-        DRAW = null; stagePrompt('arc0'); persist(); draw();
+      var rv = parseFloat(txt);
+      if (!isNaN(rv) && Math.abs(rv) > 1e-6){
+        var g2 = arcFrom2R({x:DRAW.ax,y:DRAW.ay}, {x:DRAW.bx,y:DRAW.by}, rv);
+        if (g2){
+          pushUndo();
+          DOC.ents.push({t:'arc', cx:g2.cx, cy:g2.cy, r:g2.r, a0:g2.a0, a1:g2.a1, ccw:g2.ccw});
+          DRAW = null; stagePrompt('arc0'); persist(); draw();
+        }
       }
       return;
     }
+  }
+  if (TOOL === 'offset'){
+    if (!SEL.length){ stagePrompt('selFirst'); return; }
+    var od = parseFloat(txt);
+    if (!isNaN(od) && Math.abs(od) > 1e-9){
+      pushUndo();
+      var made = [];
+      SEL.forEach(function(i){
+        var ne = offsetEnt(DOC.ents[i], od);
+        if (ne){
+          if (DOC.ents[i].tp) ne.tp = true;
+          if (DOC.ents[i].con) ne.con = true;
+          made.push(DOC.ents.length);
+          DOC.ents.push(ne);
+        }
+      });
+      if (made.length){ SEL = made; persist(); }   // chain: offset again offsets the new ring
+      stagePrompt('offset0'); draw();
+    }
+    return;
+  }
+  if (TOOL === 'copy'){
+    if (!SEL.length){ stagePrompt('selFirst'); return; }
+    var base = DRAW ? {x:DRAW.bx, y:DRAW.by} : {x:0, y:0};
+    var pc = parseNumericPoint(txt, base);
+    if (pc){
+      var dx = DRAW ? pc.x - DRAW.bx : pc.x, dy = DRAW ? pc.y - DRAW.by : pc.y;
+      if (!DRAW && txt.charAt(0) !== '@'){ return; } // absolute point without a base is ambiguous
+      applySel(true, function(en){ moveEntity(en, dx, dy); });
+      DRAW = null; stagePrompt('copy0'); persist(); draw();
+    }
+    return;
+  }
+  if (TOOL === 'mirror'){
+    if (!SEL.length){ stagePrompt('selFirst'); return; }
+    var mtxt = txt.trim().toUpperCase();
+    if (mtxt === 'H' || mtxt === 'V' || mtxt === 'HH' || mtxt === 'VV'){
+      var bb = selBBox();
+      var mcx = (bb.x0+bb.x1)/2, mcy = (bb.y0+bb.y1)/2;
+      var leftRight = mtxt.charAt(0) === 'H';       // H: flip horizontally (left\u2194right, vertical axis) \u2014 VCarve convention
+      var inPlace = mtxt.length === 2;
+      applySel(!inPlace, function(en){ mirrorEnt(en, mcx, mcy, leftRight ? 0 : 1, leftRight ? 1 : 0); });
+      stagePrompt('mirror0'); persist(); draw();
+    }
+    return;
+  }
+  if (TOOL === 'rotate'){
+    if (!SEL.length){ stagePrompt('selFirst'); return; }
+    if (!DRAW){
+      var pr2 = parseNumericPoint(txt, null);
+      if (pr2){ DRAW = {stage:1, cx:pr2.x, cy:pr2.y}; stagePrompt('rotate1'); draw(); }
+      return;
+    }
+    var angDeg = parseFloat(txt);
+    if (!isNaN(angDeg) && Math.abs(angDeg) > 1e-9){
+      applySel(false, (function(cx3,cy3,ang3){ return function(en){ rotateEnt(en, cx3, cy3, ang3); }; })(DRAW.cx, DRAW.cy, angDeg*Math.PI/180));
+      DRAW = null; stagePrompt('rotate0'); persist(); draw();
+    }
+    return;
+  }
+  if (TOOL === 'array'){
+    if (!SEL.length){ stagePrompt('selFirst'); return; }
+    var at = txt.trim();
+    var mLin = at.match(/^(\d+)\s*@\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)$/);
+    var mCirc = at.match(/^(\d+)\s*<\s*(-?[\d.]+)$/);
+    if (mLin && !DRAW){
+      var nL = parseInt(mLin[1],10), ddx = parseFloat(mLin[2]), ddy = parseFloat(mLin[3]);
+      if (nL >= 2 && nL <= 500){
+        pushUndo();
+        var srcL = SEL.slice();
+        for (var kL = 1; kL < nL; kL++){
+          srcL.forEach(function(i2){
+            var cL = cloneEnt(DOC.ents[i2]);
+            moveEntity(cL, ddx*kL, ddy*kL);
+            DOC.ents.push(cL);
+          });
+        }
+        stagePrompt('array0'); persist(); draw();
+      }
+      return;
+    }
+    if (mCirc && DRAW){
+      var nC = parseInt(mCirc[1],10), step = parseFloat(mCirc[2])*Math.PI/180;
+      if (nC >= 2 && nC <= 500 && Math.abs(step) > 1e-9){
+        pushUndo();
+        var srcC = SEL.slice();
+        for (var kC = 1; kC < nC; kC++){
+          srcC.forEach(function(i3){
+            var cC = cloneEnt(DOC.ents[i3]);
+            rotateEnt(cC, DRAW.cx, DRAW.cy, step*kC);
+            DOC.ents.push(cC);
+          });
+        }
+        DRAW = null; stagePrompt('array0'); persist(); draw();
+      }
+      return;
+    }
+    return;
+  }
+  if (TOOL === 'fillet'){
+    var fr = parseFloat(txt);
+    if (!isNaN(fr) && fr > 0){
+      UICFG.filletR = fr;
+      uiCfgSave();
+      stagePrompt('fillet0');
+    }
+    return;
   }
   if (TOOL === 'guide' && DRAW && DRAW.stage === 'guideOffset'){
     var d = parseFloat(txt);
@@ -828,8 +1008,9 @@ function draw(){
   // entities
   DOC.ents.forEach(function(e,i){
     var isSel = SEL.indexOf(i) >= 0;
-    ctx.strokeStyle = isSel ? '#ffc96b' : (e.tp ? UICFG.colors.tp : UICFG.colors.vec);
-    ctx.lineWidth = isSel ? 2.5 : 1.6;
+    ctx.strokeStyle = isSel ? '#ffc96b' : (e.con ? UICFG.colors.con : (e.tp ? UICFG.colors.tp : UICFG.colors.vec));
+    ctx.lineWidth = isSel ? 2.5 : (e.con ? 1.2 : 1.6);
+    ctx.setLineDash(e.con ? [6,4] : []);
     ctx.beginPath();
     if (e.t==='line'){ var p1=w2s(e.x1,e.y1), p2=w2s(e.x2,e.y2); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); }
     else if (e.t==='rect'){ var r1=w2s(e.x,e.y+e.h), r2=w2s(e.x+e.w,e.y); ctx.rect(r1.x,r1.y, r2.x-r1.x, r2.y-r1.y); }
@@ -854,6 +1035,7 @@ function draw(){
     }
     ctx.stroke();
   });
+  ctx.setLineDash([]);
 
   // dimension layer for the current selection
   function dimText(txt, sx, sy){
@@ -907,6 +1089,19 @@ function draw(){
     if (dg) dimLine(dg.p1, dg.p2, dg.label);
   }
 
+  // marquee selection box
+  if (TOOL === 'select' && DRAW && DRAW.stage === 'marq'){
+    var ma = w2s(DRAW.sx, DRAW.sy), mb = w2s(DRAW.ex, DRAW.ey);
+    var crossing = DRAW.ex < DRAW.sx;
+    ctx.fillStyle = crossing ? 'rgba(111,168,220,0.10)' : 'rgba(232,163,61,0.08)';
+    ctx.fillRect(Math.min(ma.x,mb.x), Math.min(ma.y,mb.y), Math.abs(mb.x-ma.x), Math.abs(mb.y-ma.y));
+    ctx.strokeStyle = crossing ? '#6fa8dc' : '#e8a33d';
+    ctx.lineWidth = 1;
+    ctx.setLineDash(crossing ? [5,4] : []);
+    ctx.strokeRect(Math.min(ma.x,mb.x), Math.min(ma.y,mb.y), Math.abs(mb.x-ma.x), Math.abs(mb.y-ma.y));
+    ctx.setLineDash([]);
+  }
+
   // in-progress rubber band
   if (DRAW && MOUSE.snap){
     var m = MOUSE.snap;
@@ -921,13 +1116,18 @@ function draw(){
       var cc=w2s(DRAW.x,DRAW.y); ctx.arc(cc.x,cc.y, Math.hypot(m.x-DRAW.x,m.y-DRAW.y)*VIEW.scale, 0, Math.PI*2);
     }
     else if (TOOL==='arc' && DRAW.stage===1){
-      var ac=w2s(DRAW.cx,DRAW.cy), am=w2s(m.x,m.y);
-      ctx.moveTo(ac.x,ac.y); ctx.lineTo(am.x,am.y);
+      var aa=w2s(DRAW.ax,DRAW.ay), am=w2s(m.x,m.y);
+      ctx.moveTo(aa.x,aa.y); ctx.lineTo(am.x,am.y);
     }
     else if (TOOL==='arc' && DRAW.stage===2){
-      var ac2=w2s(DRAW.cx,DRAW.cy);
-      var aEnd = angTo(DRAW.cx, DRAW.cy, m);
-      ctx.arc(ac2.x, ac2.y, DRAW.r*VIEW.scale, -DRAW.a0, -aEnd, true);
+      var ga = arcFrom3({x:DRAW.ax,y:DRAW.ay}, {x:DRAW.bx,y:DRAW.by}, m);
+      var pa2=w2s(DRAW.ax,DRAW.ay), pb2=w2s(DRAW.bx,DRAW.by);
+      if (ga){
+        var gc=w2s(ga.cx,ga.cy);
+        ctx.arc(gc.x, gc.y, ga.r*VIEW.scale, -ga.a0, -ga.a1, ga.ccw); // screen Y-flip mirrors handedness
+      } else {
+        ctx.moveTo(pa2.x,pa2.y); ctx.lineTo(pb2.x,pb2.y);
+      }
     }
     else if (TOOL==='poly' && DRAW.pts){
       var s0p=w2s(DRAW.pts[0][0], DRAW.pts[0][1]);
@@ -947,6 +1147,687 @@ function draw(){
     ctx.lineWidth = 1.5;
     ctx.strokeRect(sm.x-4, sm.y-4, 8, 8);
   }
+}
+
+/* ---------------- two-point arc construction ---------------- */
+function arcFrom3(A, B, C){
+  // circle through A,B,C; arc runs A->B passing through C
+  var d = 2*(A.x*(B.y-C.y) + B.x*(C.y-A.y) + C.x*(A.y-B.y));
+  if (Math.abs(d) < 1e-9) return null; // collinear
+  var a2 = A.x*A.x+A.y*A.y, b2 = B.x*B.x+B.y*B.y, c2 = C.x*C.x+C.y*C.y;
+  var cx = (a2*(B.y-C.y) + b2*(C.y-A.y) + c2*(A.y-B.y)) / d;
+  var cy = (a2*(C.x-B.x) + b2*(A.x-C.x) + c2*(B.x-A.x)) / d;
+  var r = Math.hypot(A.x-cx, A.y-cy);
+  var cross = (B.x-A.x)*(C.y-A.y) - (B.y-A.y)*(C.x-A.x);
+  return {cx:cx, cy:cy, r:r,
+          a0:Math.atan2(A.y-cy, A.x-cx), a1:Math.atan2(B.y-cy, B.x-cx),
+          ccw: cross < 0};
+}
+function arcFrom2R(A, B, rSigned){
+  var chord = Math.hypot(B.x-A.x, B.y-A.y);
+  if (chord < 1e-9) return null;
+  var r = Math.max(Math.abs(rSigned), chord/2);
+  var h = Math.sqrt(Math.max(r*r - chord*chord/4, 0));
+  var ux = (B.x-A.x)/chord, uy = (B.y-A.y)/chord;
+  var nx = -uy, ny = ux;                      // left normal of A->B
+  var sideLeft = rSigned > 0;                 // bulge side
+  var cx = (A.x+B.x)/2 + (sideLeft ? -nx*h : nx*h);   // minor arc: center opposite the bulge
+  var cy = (A.y+B.y)/2 + (sideLeft ? -ny*h : ny*h);
+  return {cx:cx, cy:cy, r:r,
+          a0:Math.atan2(A.y-cy, A.x-cx), a1:Math.atan2(B.y-cy, B.x-cx),
+          ccw: !sideLeft};
+}
+
+/* ---------------- intersection kernel (edit tools) ---------------- */
+function primsOf(e){
+  // decompose an entity into line segments + circular pieces for intersection tests
+  var out = [];
+  if (e.t === 'circle') out.push({c:1, cx:e.cx, cy:e.cy, r:e.r});
+  else if (e.t === 'arc') out.push({c:1, cx:e.cx, cy:e.cy, r:e.r, a0:e.a0, a1:e.a1, ccw:e.ccw});
+  else if (e.t === 'path') {
+    var tp = tessPath(e, 0.08), n = tp.length;
+    for (var i=0;i<n-1;i++) out.push({c:0, x1:tp[i][0],y1:tp[i][1],x2:tp[i+1][0],y2:tp[i+1][1]});
+    if (e.closed && n>1) out.push({c:0, x1:tp[n-1][0],y1:tp[n-1][1],x2:tp[0][0],y2:tp[0][1]});
+  }
+  else entityEdges(e).forEach(function(ed){ out.push({c:0, x1:ed[0],y1:ed[1],x2:ed[2],y2:ed[3]}); });
+  return out;
+}
+function angNorm(a){ while (a < 0) a += 2*Math.PI; while (a >= 2*Math.PI) a -= 2*Math.PI; return a; }
+function arcSweepOf(a0, a1, ccw){
+  var d = ccw ? angNorm(a1-a0) : angNorm(a0-a1);
+  return d < 1e-12 ? 2*Math.PI : d;
+}
+function angOnArc(pr, ang){
+  if (pr.a0 === undefined) return true; // full circle
+  var sw = arcSweepOf(pr.a0, pr.a1, pr.ccw);
+  var d = pr.ccw ? angNorm(ang - pr.a0) : angNorm(pr.a0 - ang);
+  return d <= sw + 1e-9;
+}
+function xLineLine(x1,y1,x2,y2, x3,y3,x4,y4){
+  var d = (x2-x1)*(y4-y3) - (y2-y1)*(x4-x3);
+  if (Math.abs(d) < 1e-12) return null;
+  var t = ((x3-x1)*(y4-y3) - (y3-y1)*(x4-x3)) / d;
+  var u = ((x3-x1)*(y2-y1) - (y3-y1)*(x2-x1)) / d;
+  return {t:t, u:u, x:x1+t*(x2-x1), y:y1+t*(y2-y1)};
+}
+function xLineCircle(x1,y1,x2,y2, cx,cy,r){
+  var dx=x2-x1, dy=y2-y1;
+  var fx=x1-cx, fy=y1-cy;
+  var a=dx*dx+dy*dy, b=2*(fx*dx+fy*dy), c=fx*fx+fy*fy-r*r;
+  var disc=b*b-4*a*c;
+  if (disc < 0 || a < 1e-15) return [];
+  var q=Math.sqrt(disc);
+  var out=[];
+  [(-b-q)/(2*a), (-b+q)/(2*a)].forEach(function(t){
+    out.push({t:t, x:x1+t*dx, y:y1+t*dy});
+  });
+  if (disc < 1e-12) out.pop(); // tangent: single point
+  return out;
+}
+function xCircleCircle(c1x,c1y,r1, c2x,c2y,r2){
+  var dx=c2x-c1x, dy=c2y-c1y, d=Math.hypot(dx,dy);
+  if (d < 1e-12 || d > r1+r2+1e-9 || d < Math.abs(r1-r2)-1e-9) return [];
+  var a=(r1*r1-r2*r2+d*d)/(2*d);
+  var h2=r1*r1-a*a;
+  var h=Math.sqrt(Math.max(h2,0));
+  var mx=c1x+a*dx/d, my=c1y+a*dy/d;
+  var out=[{x:mx+h*(-dy/d), y:my+h*(dx/d)}];
+  if (h > 1e-9) out.push({x:mx-h*(-dy/d), y:my-h*(dx/d)});
+  return out;
+}
+// cut parameters on a target line segment (t in (0,1)) from all other entities
+function lineCuts(idx){
+  var e = DOC.ents[idx], out = [];
+  DOC.ents.forEach(function(o, oi){
+    if (oi === idx) return;
+    primsOf(o).forEach(function(pr){
+      if (pr.c === 0){
+        var h = xLineLine(e.x1,e.y1,e.x2,e.y2, pr.x1,pr.y1,pr.x2,pr.y2);
+        if (h && h.u > -1e-9 && h.u < 1+1e-9 && h.t > 1e-9 && h.t < 1-1e-9) out.push(h.t);
+      } else {
+        xLineCircle(e.x1,e.y1,e.x2,e.y2, pr.cx,pr.cy,pr.r).forEach(function(h2){
+          if (h2.t > 1e-9 && h2.t < 1-1e-9 && angOnArc(pr, Math.atan2(h2.y-pr.cy, h2.x-pr.cx))) out.push(h2.t);
+        });
+      }
+    });
+  });
+  out.sort(function(a,b){ return a-b; });
+  return out.filter(function(v,i){ return i === 0 || v - out[i-1] > 1e-7; });
+}
+// cut angles (as sweep-params s in (0,sweep)) on a target circle/arc
+function circCuts(idx){
+  var e = DOC.ents[idx], out = [];
+  var isArc = e.t === 'arc';
+  var a0 = isArc ? e.a0 : 0, ccw = isArc ? e.ccw : true;
+  var sw = isArc ? arcSweepOf(e.a0, e.a1, e.ccw) : 2*Math.PI;
+  function push(x, y){
+    var ang = Math.atan2(y-e.cy, x-e.cx);
+    var sp = ccw ? angNorm(ang - a0) : angNorm(a0 - ang);
+    // full circle: a0 is arbitrary, a cut AT the reference angle is still a cut
+    if (isArc ? (sp > 1e-9 && sp < sw - 1e-9) : (sp < sw - 1e-9)) out.push(sp);
+  }
+  DOC.ents.forEach(function(o, oi){
+    if (oi === idx) return;
+    primsOf(o).forEach(function(pr){
+      if (pr.c === 0){
+        xLineCircle(pr.x1,pr.y1,pr.x2,pr.y2, e.cx,e.cy,e.r).forEach(function(h){
+          if (h.t > -1e-9 && h.t < 1+1e-9) push(h.x, h.y);
+        });
+      } else {
+        xCircleCircle(e.cx,e.cy,e.r, pr.cx,pr.cy,pr.r).forEach(function(q){
+          if (angOnArc(pr, Math.atan2(q.y-pr.cy, q.x-pr.cx))) push(q.x, q.y);
+        });
+      }
+    });
+  });
+  out.sort(function(a,b){ return a-b; });
+  return out.filter(function(v,i){ return i === 0 || v - out[i-1] > 1e-7; });
+}
+function arcPtAt(e, sp){ // point at sweep-param sp
+  var ccw = e.t === 'arc' ? e.ccw : true;
+  var a0 = e.t === 'arc' ? e.a0 : 0;
+  var a = ccw ? a0 + sp : a0 - sp;
+  return {a:a, x:e.cx + e.r*Math.cos(a), y:e.cy + e.r*Math.sin(a)};
+}
+
+/* ---------------- edit ops: trim / extend / fillet ---------------- */
+function doTrim(w){
+  var idx = pickEntity(w);
+  if (idx === null) return false;
+  var e = DOC.ents[idx];
+  if (e.t === 'line'){
+    var L = Math.hypot(e.x2-e.x1, e.y2-e.y1); if (L < 1e-9) return false;
+    var tc = ((w.x-e.x1)*(e.x2-e.x1) + (w.y-e.y1)*(e.y2-e.y1)) / (L*L);
+    var cuts = lineCuts(idx);
+    var lo = null, hi = null;
+    cuts.forEach(function(t){ if (t < tc) lo = t; else if (hi === null) hi = t; });
+    pushUndo();
+    var pieces = [];
+    function mk(t0, t1){
+      if (t1 - t0 < 1e-6) return;
+      var ne = {t:'line', x1:e.x1+(e.x2-e.x1)*t0, y1:e.y1+(e.y2-e.y1)*t0,
+                          x2:e.x1+(e.x2-e.x1)*t1, y2:e.y1+(e.y2-e.y1)*t1};
+      if (e.tp) ne.tp = true;
+      pieces.push(ne);
+    }
+    if (lo !== null) mk(0, lo);
+    if (hi !== null) mk(hi, 1);
+    DOC.ents.splice.apply(DOC.ents, [idx,1].concat(pieces));
+    return true;
+  }
+  if (e.t === 'circle' || e.t === 'arc'){
+    var sw = e.t === 'arc' ? arcSweepOf(e.a0, e.a1, e.ccw) : 2*Math.PI;
+    var ccw = e.t === 'arc' ? e.ccw : true;
+    var a0 = e.t === 'arc' ? e.a0 : 0;
+    var angC = Math.atan2(w.y-e.cy, w.x-e.cx);
+    var sc = ccw ? angNorm(angC - a0) : angNorm(a0 - angC);
+    if (sc > sw) sc = sw - 1e-6;
+    var cuts2 = circCuts(idx);
+    pushUndo();
+    if (e.t === 'circle'){
+      if (cuts2.length < 2){ DOC.ents.splice(idx,1); return true; }
+      var lo2 = null, hi2 = null;
+      cuts2.forEach(function(t){ if (t < sc) lo2 = t; else if (hi2 === null) hi2 = t; });
+      if (lo2 === null) lo2 = cuts2[cuts2.length-1];       // wrap
+      if (hi2 === null) hi2 = cuts2[0];
+      var pA = arcPtAt(e, hi2), pB = arcPtAt(e, lo2);
+      var ne2 = {t:'arc', cx:e.cx, cy:e.cy, r:e.r, a0:pA.a, a1:pB.a, ccw:true};
+      if (e.tp) ne2.tp = true;
+      DOC.ents.splice(idx,1,ne2);
+      return true;
+    }
+    var lo3 = null, hi3 = null;
+    cuts2.forEach(function(t){ if (t < sc) lo3 = t; else if (hi3 === null) hi3 = t; });
+    var pieces3 = [];
+    function mkArc(s0, s1){
+      if (s1 - s0 < 1e-6) return;
+      var q0 = arcPtAt(e, s0), q1 = arcPtAt(e, s1);
+      var na = {t:'arc', cx:e.cx, cy:e.cy, r:e.r, a0:q0.a, a1:q1.a, ccw:e.ccw};
+      if (e.tp) na.tp = true;
+      pieces3.push(na);
+    }
+    if (lo3 !== null) mkArc(0, lo3);
+    if (hi3 !== null) mkArc(hi3, sw);
+    DOC.ents.splice.apply(DOC.ents, [idx,1].concat(pieces3));
+    return true;
+  }
+  return false;
+}
+function doExtend(w){
+  var idx = pickEntity(w);
+  if (idx === null) return false;
+  var e = DOC.ents[idx];
+  if (e.t === 'line'){
+    var d1 = Math.hypot(w.x-e.x1, w.y-e.y1), d2 = Math.hypot(w.x-e.x2, w.y-e.y2);
+    var fromEnd2 = d2 < d1; // extend the nearer endpoint
+    var A = fromEnd2 ? {x:e.x1,y:e.y1} : {x:e.x2,y:e.y2};
+    var B = fromEnd2 ? {x:e.x2,y:e.y2} : {x:e.x1,y:e.y1};
+    var best = null;
+    DOC.ents.forEach(function(o, oi){
+      if (oi === idx) return;
+      primsOf(o).forEach(function(pr){
+        if (pr.c === 0){
+          var h = xLineLine(A.x,A.y,B.x,B.y, pr.x1,pr.y1,pr.x2,pr.y2);
+          if (h && h.u > -1e-9 && h.u < 1+1e-9 && h.t > 1+1e-9 && (!best || h.t < best.t)) best = h;
+        } else {
+          xLineCircle(A.x,A.y,B.x,B.y, pr.cx,pr.cy,pr.r).forEach(function(h2){
+            if (h2.t > 1+1e-9 && angOnArc(pr, Math.atan2(h2.y-pr.cy, h2.x-pr.cx)) && (!best || h2.t < best.t)) best = h2;
+          });
+        }
+      });
+    });
+    if (!best) return false;
+    pushUndo();
+    if (fromEnd2){ e.x2 = best.x; e.y2 = best.y; } else { e.x1 = best.x; e.y1 = best.y; }
+    return true;
+  }
+  if (e.t === 'arc'){
+    var sw4 = arcSweepOf(e.a0, e.a1, e.ccw);
+    var q0 = arcPtAt(e, 0), q1 = arcPtAt(e, sw4);
+    var dEnd = Math.hypot(w.x-q1.x, w.y-q1.y) < Math.hypot(w.x-q0.x, w.y-q0.y);
+    var cand = [];
+    DOC.ents.forEach(function(o, oi){
+      if (oi === idx) return;
+      primsOf(o).forEach(function(pr){
+        var pts = pr.c === 0 ? xLineCircle(pr.x1,pr.y1,pr.x2,pr.y2, e.cx,e.cy,e.r).filter(function(h){ return h.t > -1e-9 && h.t < 1+1e-9; })
+                             : xCircleCircle(e.cx,e.cy,e.r, pr.cx,pr.cy,pr.r).filter(function(q){ return angOnArc(pr, Math.atan2(q.y-pr.cy, q.x-pr.cx)); });
+        pts.forEach(function(q){ cand.push(Math.atan2(q.y-e.cy, q.x-e.cx)); });
+      });
+    });
+    if (!cand.length) return false;
+    var bestGain = null;
+    cand.forEach(function(ang){
+      var gain = dEnd ? (e.ccw ? angNorm(ang - Math.atan2(q1.y-e.cy,q1.x-e.cx)) : angNorm(Math.atan2(q1.y-e.cy,q1.x-e.cx) - ang))
+                      : (e.ccw ? angNorm(Math.atan2(q0.y-e.cy,q0.x-e.cx) - ang) : angNorm(ang - Math.atan2(q0.y-e.cy,q0.x-e.cx)));
+      if (gain > 1e-6 && gain + sw4 < 2*Math.PI - 1e-6 && (bestGain === null || gain < bestGain.g)) bestGain = {g:gain, a:ang};
+    });
+    if (!bestGain) return false;
+    pushUndo();
+    if (dEnd) e.a1 = bestGain.a; else e.a0 = bestGain.a;
+    return true;
+  }
+  return false;
+}
+function polyToPath(e){
+  return {t:'path', pts: e.pts.map(function(p){ return [p[0], p[1], 0]; }), closed: !!e.closed};
+}
+function rectToPath(e){
+  return {t:'path', closed:true, pts:[[e.x,e.y,0],[e.x+e.w,e.y,0],[e.x+e.w,e.y+e.h,0],[e.x,e.y+e.h,0]]};
+}
+function filletPathVertex(pe, vi, r){
+  var n = pe.pts.length;
+  var iPrev = (vi-1+n) % n, iNext = (vi+1) % n;
+  if (!pe.closed && (vi === 0 || vi === n-1)) return null;
+  if (Math.abs(pe.pts[iPrev][2]) > 1e-9 || Math.abs(pe.pts[vi][2]) > 1e-9) return null; // straight legs only
+  var P = {x:pe.pts[vi][0], y:pe.pts[vi][1]};
+  var A = {x:pe.pts[iPrev][0], y:pe.pts[iPrev][1]};
+  var B = {x:pe.pts[iNext][0], y:pe.pts[iNext][1]};
+  var u1 = {x:A.x-P.x, y:A.y-P.y}, u2 = {x:B.x-P.x, y:B.y-P.y};
+  var l1 = Math.hypot(u1.x,u1.y), l2 = Math.hypot(u2.x,u2.y);
+  if (l1 < 1e-9 || l2 < 1e-9) return null;
+  u1.x/=l1; u1.y/=l1; u2.x/=l2; u2.y/=l2;
+  var cosT = u1.x*u2.x + u1.y*u2.y;
+  cosT = Math.max(-1, Math.min(1, cosT));
+  var theta = Math.acos(cosT);
+  if (theta < 0.02 || theta > Math.PI - 0.02) return null; // degenerate corner
+  var t = r / Math.tan(theta/2);
+  if (t > l1 - 1e-6 || t > l2 - 1e-6) return null; // legs too short
+  var T1 = {x:P.x + u1.x*t, y:P.y + u1.y*t};
+  var T2 = {x:P.x + u2.x*t, y:P.y + u2.y*t};
+  var cross = u1.x*u2.y - u1.y*u2.x;
+  var sweep = Math.PI - theta;
+  var bulge = Math.tan(sweep/4) * (cross > 0 ? -1 : 1); // turn direction sets arc side
+  var pts = pe.pts.slice();
+  pts.splice(vi, 1, [T1.x, T1.y, bulge], [T2.x, T2.y, 0]);
+  return {t:'path', pts:pts, closed:pe.closed};
+}
+function doFillet(w, r){
+  var tol = 10/VIEW.scale;
+  // 1) vertex of poly / path / rect corner
+  for (var i = 0; i < DOC.ents.length; i++){
+    var e = DOC.ents[i];
+    var pe = null, conv = false;
+    if (e.t === 'poly'){ pe = polyToPath(e); conv = true; }
+    else if (e.t === 'path'){ pe = e; }
+    else if (e.t === 'rect'){ pe = rectToPath(e); conv = true; }
+    if (!pe) continue;
+    for (var vi = 0; vi < pe.pts.length; vi++){
+      if (Math.hypot(w.x-pe.pts[vi][0], w.y-pe.pts[vi][1]) < tol){
+        var ne = filletPathVertex(pe, vi, r);
+        if (ne){
+          if (e.tp) ne.tp = true;
+          pushUndo(); DOC.ents.splice(i, 1, ne); return true;
+        }
+      }
+    }
+  }
+  // 2) two line entities near the click
+  var near = [];
+  DOC.ents.forEach(function(e2, i2){
+    if (e2.t !== 'line') return;
+    var d = distToSeg(w.x, w.y, e2.x1, e2.y1, e2.x2, e2.y2);
+    if (d < tol*1.6) near.push({i:i2, d:d});
+  });
+  near.sort(function(a,b){ return a.d-b.d; });
+  if (near.length < 2) return false;
+  var eA = DOC.ents[near[0].i], eB = DOC.ents[near[1].i];
+  var X = xLineLine(eA.x1,eA.y1,eA.x2,eA.y2, eB.x1,eB.y1,eB.x2,eB.y2);
+  if (!X) return false;
+  function sideDir(e3){
+    // choose the kept side from where the segment actually LIES relative to X;
+    // the click only disambiguates when the segment genuinely crosses X.
+    var dx = e3.x2-e3.x1, dy = e3.y2-e3.y1, L = Math.hypot(dx,dy);
+    dx/=L; dy/=L;
+    var p1 = (e3.x1-X.x)*dx + (e3.y1-X.y)*dy;
+    var p2 = (e3.x2-X.x)*dx + (e3.y2-X.y)*dy;
+    var sBody = Math.abs(p2) >= Math.abs(p1) ? (p2 >= 0 ? 1 : -1) : (p1 >= 0 ? 1 : -1);
+    var srt = sBody;
+    if (p1 < -1e-6 && p2 > 1e-6 || p1 > 1e-6 && p2 < -1e-6){ // segment crosses X: click picks the quadrant
+      var pw = (w.x-X.x)*dx + (w.y-X.y)*dy;
+      if (Math.abs(pw) > 1e-6) srt = pw > 0 ? 1 : -1;
+    }
+    return {x:dx*srt, y:dy*srt, p1:p1, p2:p2, s:srt};
+  }
+  var v1 = sideDir(eA), v2 = sideDir(eB);
+  var cosT2 = Math.max(-1, Math.min(1, v1.x*v2.x + v1.y*v2.y));
+  var th = Math.acos(cosT2);
+  if (th < 0.02 || th > Math.PI - 0.02) return false;
+  var t2 = r / Math.tan(th/2);
+  var T1b = {x:X.x + v1.x*t2, y:X.y + v1.y*t2};
+  var T2b = {x:X.x + v2.x*t2, y:X.y + v2.y*t2};
+  var bx = v1.x+v2.x, by = v1.y+v2.y, bl = Math.hypot(bx,by);
+  if (bl < 1e-9) return false;
+  var O = {x:X.x + bx/bl * (r/Math.sin(th/2)), y:X.y + by/bl * (r/Math.sin(th/2))};
+  function retrim(e4, sd, T){
+    // keep the endpoint farther along the kept side; the other becomes T
+    if (sd.p2*sd.s >= sd.p1*sd.s){ e4.x1 = T.x; e4.y1 = T.y; } else { e4.x2 = T.x; e4.y2 = T.y; }
+  }
+  pushUndo();
+  retrim(eA, v1, T1b); retrim(eB, v2, T2b);
+  var aT1 = Math.atan2(T1b.y-O.y, T1b.x-O.x), aT2 = Math.atan2(T2b.y-O.y, T2b.x-O.x);
+  var ccwF = angNorm(aT2-aT1) <= Math.PI; // minor direction
+  DOC.ents.push({t:'arc', cx:O.x, cy:O.y, r:r, a0:aT1, a1:aT2, ccw:ccwF});
+  return true;
+}
+
+/* ---------------- transform kernel (copy / mirror / rotate / array) ---------------- */
+function cloneEnt(e){
+  var c = JSON.parse(JSON.stringify(e));
+  delete c._tess; delete c._tess2;
+  return c;
+}
+function entBBox(e){
+  var xs = [], ys = [];
+  if (e.t === 'circle'){ xs = [e.cx-e.r, e.cx+e.r]; ys = [e.cy-e.r, e.cy+e.r]; }
+  else if (e.t === 'arc'){
+    var sw = arcSweepOf(e.a0, e.a1, e.ccw);
+    for (var k = 0; k <= 16; k++){
+      var q = arcPtAt(e, sw*k/16);
+      xs.push(q.x); ys.push(q.y);
+    }
+  }
+  else if (e.t === 'path'){
+    tessPath(e, 0.15).forEach(function(q){ xs.push(q[0]); ys.push(q[1]); });
+  }
+  else entityEdges(e).forEach(function(ed){ xs.push(ed[0], ed[2]); ys.push(ed[1], ed[3]); });
+  return {x0:Math.min.apply(null,xs), y0:Math.min.apply(null,ys),
+          x1:Math.max.apply(null,xs), y1:Math.max.apply(null,ys)};
+}
+function selBBox(){
+  var b = null;
+  SEL.forEach(function(i){
+    var eb = entBBox(DOC.ents[i]);
+    if (!b) b = eb;
+    else b = {x0:Math.min(b.x0,eb.x0), y0:Math.min(b.y0,eb.y0), x1:Math.max(b.x1,eb.x1), y1:Math.max(b.y1,eb.y1)};
+  });
+  return b;
+}
+function rotPt(x, y, cx, cy, ca, sa){
+  var dx = x-cx, dy = y-cy;
+  return [cx + dx*ca - dy*sa, cy + dx*sa + dy*ca];
+}
+function rotateEnt(e, cx, cy, ang){
+  var ca = Math.cos(ang), sa = Math.sin(ang);
+  if (e.t === 'rect'){ // rotation breaks axis alignment: become a closed poly first
+    var pp = [[e.x,e.y],[e.x+e.w,e.y],[e.x+e.w,e.y+e.h],[e.x,e.y+e.h]];
+    e.t = 'poly'; e.pts = pp; e.closed = true;
+    delete e.x; delete e.y; delete e.w; delete e.h;
+  }
+  if (e.t === 'line'){
+    var a = rotPt(e.x1,e.y1,cx,cy,ca,sa), b = rotPt(e.x2,e.y2,cx,cy,ca,sa);
+    e.x1=a[0]; e.y1=a[1]; e.x2=b[0]; e.y2=b[1];
+  }
+  else if (e.t === 'circle'){ var c = rotPt(e.cx,e.cy,cx,cy,ca,sa); e.cx=c[0]; e.cy=c[1]; }
+  else if (e.t === 'arc'){
+    var c2 = rotPt(e.cx,e.cy,cx,cy,ca,sa); e.cx=c2[0]; e.cy=c2[1];
+    e.a0 += ang; e.a1 += ang;
+  }
+  else if (e.t === 'poly'){ e.pts = e.pts.map(function(pt){ return rotPt(pt[0],pt[1],cx,cy,ca,sa); }); }
+  else if (e.t === 'path'){
+    e.pts = e.pts.map(function(pt){ var q = rotPt(pt[0],pt[1],cx,cy,ca,sa); return [q[0], q[1], pt[2]||0]; });
+    e._tess = null; e._tess2 = null;
+  }
+}
+function mirPt(x, y, px, py, ux, uy){
+  // reflect across line through (px,py) with unit direction (ux,uy)
+  var dx = x-px, dy = y-py;
+  var d = dx*ux + dy*uy;
+  var rx = 2*(px + d*ux) - x, ry = 2*(py + d*uy) - y;
+  return [rx, ry];
+}
+function mirrorEnt(e, px, py, ux, uy){
+  var phi = Math.atan2(uy, ux);
+  if (e.t === 'rect'){
+    var axisVert = Math.abs(ux) < 1e-9, axisHorz = Math.abs(uy) < 1e-9;
+    if (axisVert || axisHorz){ // stays a rect
+      var a = mirPt(e.x, e.y, px, py, ux, uy), b = mirPt(e.x+e.w, e.y+e.h, px, py, ux, uy);
+      e.x = Math.min(a[0], b[0]); e.y = Math.min(a[1], b[1]);
+      return;
+    }
+    var pp = [[e.x,e.y],[e.x+e.w,e.y],[e.x+e.w,e.y+e.h],[e.x,e.y+e.h]];
+    e.t = 'poly'; e.pts = pp; e.closed = true;
+    delete e.x; delete e.y; delete e.w; delete e.h;
+  }
+  if (e.t === 'line'){
+    var a2 = mirPt(e.x1,e.y1,px,py,ux,uy), b2 = mirPt(e.x2,e.y2,px,py,ux,uy);
+    e.x1=a2[0]; e.y1=a2[1]; e.x2=b2[0]; e.y2=b2[1];
+  }
+  else if (e.t === 'circle'){ var c = mirPt(e.cx,e.cy,px,py,ux,uy); e.cx=c[0]; e.cy=c[1]; }
+  else if (e.t === 'arc'){
+    var c2 = mirPt(e.cx,e.cy,px,py,ux,uy); e.cx=c2[0]; e.cy=c2[1];
+    e.a0 = 2*phi - e.a0; e.a1 = 2*phi - e.a1;
+    e.ccw = !e.ccw;
+  }
+  else if (e.t === 'poly'){ e.pts = e.pts.map(function(pt){ return mirPt(pt[0],pt[1],px,py,ux,uy); }); }
+  else if (e.t === 'path'){
+    e.pts = e.pts.map(function(pt){ var q = mirPt(pt[0],pt[1],px,py,ux,uy); return [q[0], q[1], -(pt[2]||0)]; });
+    e._tess = null; e._tess2 = null;
+  }
+}
+// run a transform over the selection; copy=true keeps originals and selects the new copies
+function applySel(copy, fn){
+  if (!SEL.length) return false;
+  pushUndo();
+  if (copy){
+    var newIdx = [];
+    SEL.forEach(function(i){
+      var c = cloneEnt(DOC.ents[i]);
+      fn(c);
+      newIdx.push(DOC.ents.length);
+      DOC.ents.push(c);
+    });
+    SEL = newIdx; // chainable: copy again moves from the new position
+  } else {
+    SEL.forEach(function(i){ fn(DOC.ents[i]); });
+  }
+  return true;
+}
+
+/* ---------------- offset / join / explode ---------------- */
+function signedArea(pts){
+  var a = 0;
+  for (var i = 0; i < pts.length; i++){
+    var j = (i+1) % pts.length;
+    a += pts[i][0]*pts[j][1] - pts[j][0]*pts[i][1];
+  }
+  return a/2;
+}
+function offsetPolyPts(pts, dOut, closed){
+  // miter offset: + = outward for closed shapes (winding-independent); for open, + = left of travel
+  var n = pts.length;
+  if (n < 2) return null;
+  var sgn = closed ? (signedArea(pts) > 0 ? 1 : -1) : -1; // scale left-normal into outward
+  var d = dOut * sgn * -1; // shift along left normal by this amount
+  function edgeOff(i){
+    var j = (i+1) % n;
+    var dx = pts[j][0]-pts[i][0], dy = pts[j][1]-pts[i][1], L = Math.hypot(dx,dy);
+    if (L < 1e-12) return null;
+    var nx = -dy/L, ny = dx/L; // left normal
+    return {x1:pts[i][0]+nx*d, y1:pts[i][1]+ny*d, x2:pts[j][0]+nx*d, y2:pts[j][1]+ny*d};
+  }
+  var m = closed ? n : n-1;
+  var eds = [];
+  for (var i = 0; i < m; i++){ var e = edgeOff(i); if (e) eds.push(e); }
+  if (eds.length < (closed ? 3 : 1)) return null;
+  var out = [];
+  if (!closed){
+    out.push([eds[0].x1, eds[0].y1]);
+    for (var k = 0; k < eds.length-1; k++){
+      var h = xLineLine(eds[k].x1,eds[k].y1,eds[k].x2,eds[k].y2, eds[k+1].x1,eds[k+1].y1,eds[k+1].x2,eds[k+1].y2);
+      out.push(h ? [h.x, h.y] : [eds[k].x2, eds[k].y2]);
+    }
+    out.push([eds[eds.length-1].x2, eds[eds.length-1].y2]);
+  } else {
+    for (var k2 = 0; k2 < eds.length; k2++){
+      var prev = eds[(k2-1+eds.length) % eds.length];
+      var h2 = xLineLine(prev.x1,prev.y1,prev.x2,prev.y2, eds[k2].x1,eds[k2].y1,eds[k2].x2,eds[k2].y2);
+      out.push(h2 ? [h2.x, h2.y] : [eds[k2].x1, eds[k2].y1]);
+    }
+  }
+  return out;
+}
+function offsetEnt(e, d){
+  // returns a NEW offset entity, or null; + = outward / left-of-travel
+  if (e.t === 'circle'){
+    var nr = e.r + d;
+    return nr > 1e-6 ? {t:'circle', cx:e.cx, cy:e.cy, r:nr} : null;
+  }
+  if (e.t === 'arc'){
+    // + = left of travel: a CCW arc keeps its center on the left, so left offset shrinks the radius
+    var nr2 = e.ccw ? e.r - d : e.r + d;
+    return nr2 > 1e-6 ? {t:'arc', cx:e.cx, cy:e.cy, r:nr2, a0:e.a0, a1:e.a1, ccw:e.ccw} : null;
+  }
+  if (e.t === 'line'){
+    var dx = e.x2-e.x1, dy = e.y2-e.y1, L = Math.hypot(dx,dy);
+    if (L < 1e-9) return null;
+    var nx = -dy/L, ny = dx/L;
+    return {t:'line', x1:e.x1+nx*d, y1:e.y1+ny*d, x2:e.x2+nx*d, y2:e.y2+ny*d};
+  }
+  if (e.t === 'rect'){
+    var nx2 = e.x - d, ny2 = e.y - d, nw = e.w + 2*d, nh = e.h + 2*d;
+    return (nw > 1e-6 && nh > 1e-6) ? {t:'rect', x:nx2, y:ny2, w:nw, h:nh} : null;
+  }
+  if (e.t === 'poly'){
+    var np = offsetPolyPts(e.pts, d, !!e.closed);
+    return np ? {t:'poly', pts:np, closed:!!e.closed} : null;
+  }
+  if (e.t === 'path'){
+    var tp = tessPath(e, 0.06).map(function(q){ return [q[0], q[1]]; });
+    var np2 = offsetPolyPts(tp, d, !!e.closed);
+    return np2 ? {t:'poly', pts:np2, closed:!!e.closed} : null;
+  }
+  return null;
+}
+// ---- join: chain selected open entities into paths (bulges preserved from arcs)
+function fragOf(e){
+  if (e.t === 'line') return [[e.x1,e.y1,0],[e.x2,e.y2,0]];
+  if (e.t === 'arc'){
+    var sw = arcSweepOf(e.a0, e.a1, e.ccw);
+    if (sw >= 2*Math.PI - 1e-9) return null;
+    var q0 = arcPtAt(e, 0), q1 = arcPtAt(e, sw);
+    var b = Math.tan(sw/4) * (e.ccw ? 1 : -1);
+    return [[q0.x,q0.y,b],[q1.x,q1.y,0]];
+  }
+  if (e.t === 'poly' && !e.closed) return e.pts.map(function(pt){ return [pt[0],pt[1],0]; });
+  if (e.t === 'path' && !e.closed) return e.pts.map(function(pt){ return [pt[0],pt[1],pt[2]||0]; });
+  return null;
+}
+function revFrag(f){
+  var n = f.length, out = [];
+  for (var i = n-1; i >= 0; i--){
+    var b = i > 0 ? -f[i-1][2] : 0;
+    out.push([f[i][0], f[i][1], b]);
+  }
+  return out;
+}
+function doJoin(){
+  var tol = 0.05;
+  var frags = [], src = [];
+  SEL.forEach(function(i){
+    var f = fragOf(DOC.ents[i]);
+    if (f){ frags.push(f); src.push(i); }
+  });
+  if (frags.length < 2) return false;
+  pushUndo();
+  var chains = [];
+  var used = frags.map(function(){ return false; });
+  for (var st = 0; st < frags.length; st++){
+    if (used[st]) continue;
+    used[st] = true;
+    var ch = frags[st].map(function(pt){ return pt.slice(); });
+    var grew = true;
+    while (grew){
+      grew = false;
+      for (var k = 0; k < frags.length; k++){
+        if (used[k]) continue;
+        var f = frags[k];
+        var he = ch[ch.length-1], hs = ch[0];
+        var fs = f[0], fe = f[f.length-1];
+        var cand = null;
+        if (Math.hypot(he[0]-fs[0], he[1]-fs[1]) < tol) cand = f;
+        else if (Math.hypot(he[0]-fe[0], he[1]-fe[1]) < tol) cand = revFrag(f);
+        if (cand){
+          ch[ch.length-1][2] = cand[0][2];       // joint vertex carries the incoming span's bulge
+          for (var q = 1; q < cand.length; q++) ch.push(cand[q].slice());
+          used[k] = true; grew = true; continue;
+        }
+        if (Math.hypot(hs[0]-fe[0], hs[1]-fe[1]) < tol) cand = f;
+        else if (Math.hypot(hs[0]-fs[0], hs[1]-fs[1]) < tol) cand = revFrag(f);
+        if (cand){
+          cand[cand.length-1][2] = ch[0][2] || cand[cand.length-1][2];
+          var head = cand.slice(0, cand.length-1);
+          cand[cand.length-1][2] = 0;
+          // prepend: cand's last point coincides with chain start
+          ch[0][2] = ch[0][2]; // chain start keeps its own outgoing bulge
+          var pre = cand.slice(0, cand.length-1);
+          ch = pre.concat(ch);
+          used[k] = true; grew = true;
+        }
+      }
+    }
+    var closed = ch.length > 2 && Math.hypot(ch[0][0]-ch[ch.length-1][0], ch[0][1]-ch[ch.length-1][1]) < tol;
+    if (closed){
+      ch[ch.length-1][2] = ch[ch.length-1][2] || 0;
+      // last point duplicates first: its bulge becomes the closing span's, stored on the (removed) last -> move to end-1
+      var closingBulge = ch[ch.length-1][2];
+      ch.pop();
+      ch[ch.length-1][2] = closingBulge || ch[ch.length-1][2];
+    }
+    chains.push({pts:ch, closed:closed});
+  }
+  // replace source entities with the chained paths
+  var keep = DOC.ents.filter(function(_, i){ return src.indexOf(i) < 0; });
+  chains.forEach(function(c){
+    keep.push(c.pts.every(function(pt){ return Math.abs(pt[2]) < 1e-12; })
+      ? {t:'poly', pts:c.pts.map(function(pt){ return [pt[0],pt[1]]; }), closed:c.closed}
+      : {t:'path', pts:c.pts, closed:c.closed});
+  });
+  DOC.ents = keep;
+  SEL = [];
+  return true;
+}
+// ---- explode: rect/poly -> lines; path -> lines + arcs
+function doExplode(){
+  if (!SEL.length) return false;
+  var any = false;
+  var out = [], victims = {};
+  SEL.forEach(function(i){
+    var e = DOC.ents[i];
+    var parts = [];
+    if (e.t === 'rect' || e.t === 'poly'){
+      entityEdges(e).forEach(function(ed){ parts.push({t:'line', x1:ed[0], y1:ed[1], x2:ed[2], y2:ed[3]}); });
+    } else if (e.t === 'path'){
+      var n = e.pts.length, last = e.closed ? n : n-1;
+      for (var k = 0; k < last; k++){
+        var p0 = e.pts[k], p1 = e.pts[(k+1)%n];
+        var b = p0[2] || 0;
+        if (Math.abs(b) < 1e-12){
+          parts.push({t:'line', x1:p0[0], y1:p0[1], x2:p1[0], y2:p1[1]});
+        } else {
+          var th = 4*Math.atan(b), ch2 = Math.hypot(p1[0]-p0[0], p1[1]-p0[1]);
+          if (ch2 > 1e-9){
+            var r = ch2/(2*Math.sin(Math.abs(th)/2));
+            var mx = (p0[0]+p1[0])/2, my = (p0[1]+p1[1])/2;
+            var h = Math.sqrt(Math.max(r*r - ch2*ch2/4, 0)) * (th > 0 ? 1 : -1);
+            var ux = (p1[0]-p0[0])/ch2, uy = (p1[1]-p0[1])/ch2;
+            var cx = mx - uy*h, cy = my + ux*h;
+            parts.push({t:'arc', cx:cx, cy:cy, r:r,
+                        a0:Math.atan2(p0[1]-cy, p0[0]-cx), a1:Math.atan2(p1[1]-cy, p1[0]-cx), ccw: th > 0});
+          }
+        }
+      }
+    }
+    if (parts.length){
+      any = true; victims[i] = true;
+      if (e.tp) parts.forEach(function(pp){ pp.tp = true; });
+      out = out.concat(parts);
+    }
+  });
+  if (!any) return false;
+  pushUndo();
+  DOC.ents = DOC.ents.filter(function(_, i){ return !victims[i]; }).concat(out);
+  SEL = [];
+  return true;
 }
 
 /* ---------------- path entity (point+bulge spans) ---------------- */
@@ -1021,10 +1902,13 @@ function updateReadout(){
       var r = Math.hypot(MOUSE.snap.x-DRAW.x, MOUSE.snap.y-DRAW.y);
       d = 'R ' + r.toFixed(2) + '  D ' + (r*2).toFixed(2);
     } else if (TOOL==='arc' && DRAW.stage===1){
-      d = 'R ' + Math.hypot(MOUSE.snap.x-DRAW.cx, MOUSE.snap.y-DRAW.cy).toFixed(2);
+      d = 'chord ' + Math.hypot(MOUSE.snap.x-DRAW.ax, MOUSE.snap.y-DRAW.ay).toFixed(2);
     } else if (TOOL==='arc' && DRAW.stage===2){
-      var swp = ((angTo(DRAW.cx,DRAW.cy,MOUSE.snap) - DRAW.a0) % (2*Math.PI) + 2*Math.PI) % (2*Math.PI);
-      d = 'R ' + DRAW.r.toFixed(2) + '  sweep ' + (swp*180/Math.PI).toFixed(1) + '\u00b0';
+      var gd = arcFrom3({x:DRAW.ax,y:DRAW.ay}, {x:DRAW.bx,y:DRAW.by}, MOUSE.snap);
+      if (gd){
+        var sw2 = Math.abs(gd.a1-gd.a0); if (gd.ccw ? gd.a1 < gd.a0 : gd.a0 < gd.a1) sw2 = 2*Math.PI - sw2;
+        d = 'R ' + gd.r.toFixed(2) + '  sweep ' + (sw2*180/Math.PI).toFixed(1) + '\u00b0';
+      } else d = 'straight (collinear)';
     }
   }
   if (!d && TOOL === 'select'){
@@ -1170,6 +2054,16 @@ var ICON = {
  circ:'<svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="6"/></svg>',
  poly:'<svg viewBox="0 0 18 18"><path d="M2.5 13.5 L6.5 5.5 L10.5 11 L15.5 3.5"/><circle cx="2.5" cy="13.5" r="1.2"/><circle cx="6.5" cy="5.5" r="1.2"/><circle cx="10.5" cy="11" r="1.2"/><circle cx="15.5" cy="3.5" r="1.2"/></svg>',
  arc:'<svg viewBox="0 0 18 18"><path d="M3.5 14.5 A 11 11 0 0 1 14.5 3.5"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/></svg>',
+ copy:'<svg viewBox="0 0 18 18"><rect x="3" y="3" width="8.5" height="8.5"/><path d="M7 15 h8 V7" opacity=".55"/></svg>',
+ mirror:'<svg viewBox="0 0 18 18"><line x1="9" y1="2.5" x2="9" y2="15.5" stroke-dasharray="2.6 2.2"/><path d="M6.5 5 L3 9 L6.5 13 Z"/><path d="M11.5 5 L15 9 L11.5 13 Z" fill="none"/></svg>',
+ rotate:'<svg viewBox="0 0 18 18"><path d="M14.5 9 A 5.5 5.5 0 1 1 9 3.5"/><path d="M9 1 L12.2 3.5 L9 6"/><circle cx="9" cy="9" r="1"/></svg>',
+ array:'<svg viewBox="0 0 18 18"><circle cx="4.5" cy="4.5" r="1.7"/><circle cx="11" cy="4.5" r="1.7"/><circle cx="4.5" cy="11" r="1.7"/><circle cx="11" cy="11" r="1.7" opacity=".45"/></svg>',
+ offs:'<svg viewBox="0 0 18 18"><rect x="6" y="6" width="6" height="6"/><rect x="2.5" y="2.5" width="13" height="13" opacity=".5" stroke-dasharray="2.4 2"/></svg>',
+ join:'<svg viewBox="0 0 18 18"><path d="M3 14 L8 9"/><path d="M10 7 L15 3"/><circle cx="9" cy="8" r="2.2" opacity=".6"/></svg>',
+ expl:'<svg viewBox="0 0 18 18"><path d="M4 12 L8 8"/><path d="M11 6 L14.5 3.5"/><path d="M12 12.5 L15 14.5"/><path d="M4.5 4 L6.5 6" opacity=".7"/></svg>',
+ fillet:'<svg viewBox="0 0 18 18"><path d="M3 15.5 V9 A 6 6 0 0 1 9 3 H15.5"/><path d="M3 6.5 V3 h3.5" opacity=".45"/></svg>',
+ trim:'<svg viewBox="0 0 18 18"><line x1="3" y1="9" x2="10" y2="9"/><line x1="12.5" y1="9" x2="15.5" y2="9" opacity=".4" stroke-dasharray="2 2"/><path d="M6 3.5 L11 13 M6 14.5 L9 9.4"/><circle cx="5" cy="15" r="1.3"/><circle cx="5" cy="3" r="1.3"/></svg>',
+ extend:'<svg viewBox="0 0 18 18"><line x1="2.5" y1="9" x2="9.5" y2="9"/><line x1="9.5" y1="9" x2="13.5" y2="9" stroke-dasharray="2 2"/><path d="M12 6.5 L15 9 L12 11.5"/><line x1="16" y1="4" x2="16" y2="14"/></svg>',
  guide:'<svg viewBox="0 0 18 18"><line x1="2.5" y1="12" x2="15.5" y2="12" stroke-dasharray="3 2.4"/><line x1="2.5" y1="5" x2="15.5" y2="5"/></svg>',
  gclr:'<svg viewBox="0 0 18 18"><line x1="2.5" y1="9" x2="9.5" y2="9" stroke-dasharray="3 2.4"/><line x1="11.5" y1="6" x2="16" y2="10.5"/><line x1="16" y1="6" x2="11.5" y2="10.5"/></svg>',
  undo:'<svg viewBox="0 0 18 18"><path d="M6.5 4 L3 7.5 L6.5 11"/><path d="M3 7.5 H11 a4 4 0 0 1 0 8 H8"/></svg>',
@@ -1184,8 +2078,18 @@ var PANEL_BTNS = {
  line:  {tool:'line', icon:'line', title:'Line (L) \u2014 click points; type exact coords anytime'},
  rect:  {tool:'rect', icon:'rect', title:'Rectangle (R) \u2014 two corners, or click then type W,H'},
  circle:{tool:'circle', icon:'circ', title:'Circle (C) \u2014 center then radius point, or type D5 for diameter'},
- arc:   {tool:'arc', icon:'arc', title:'Arc (A) \u2014 center, start, end. \'10<0\' start at R10 0\u00b0, then \'90\' sweep CCW (negative = CW)'},
+ arc:   {tool:'arc', icon:'arc', title:'Arc (A) \u2014 start point, end point, then bow it with the mouse (3-point) or type a radius; + bows left of start\u2192end, \u2212 right'},
  poly:  {tool:'poly', icon:'poly', title:'Polyline (P) \u2014 click points, Enter ends, click start to close'},
+ offsetT:{tool:'offset', icon:'offs', title:'Offset (S) \u2014 select or click shapes, then type the distance: + outward, \u2212 inward (open shapes: + is left of travel)'},
+ joinBtn:{id:'joinBtn', icon:'join', title:'Join \u2014 stitch the selected open lines, arcs and polylines into connected paths (closes loops whose ends meet)'},
+ explodeBtn:{id:'explodeBtn', icon:'expl', title:'Explode \u2014 break selected rects, polys and paths into their individual lines and arcs'},
+ copyT: {tool:'copy', icon:'copy', title:'Copy (D) \u2014 select first (V), then click base point and destination, or type @dx,dy'},
+ mirrorT:{tool:'mirror', icon:'mirror', title:'Mirror (M) \u2014 select first; type H or V for a mirrored copy across the selection center, HH/VV to flip in place, or click 2 points for a custom axis'},
+ rotateT:{tool:'rotate', icon:'rotate', title:'Rotate (O) \u2014 select first; click the rotation center, then type the angle in degrees (+ CCW)'},
+ arrayT:{tool:'array', icon:'array', title:'Array \u2014 select first; type N@dx,dy for a linear array, or click a center then type N<step\u00b0 for a circular one'},
+ fillet:{tool:'fillet', icon:'fillet', title:'Fillet (F) \u2014 type a radius, then click a corner: a poly/rect corner, or where two lines meet'},
+ trim:  {tool:'trim', icon:'trim', title:'Trim (T) \u2014 click the part of a line, arc, or circle to remove, bounded by crossings'},
+ extend:{tool:'extend', icon:'extend', title:'Extend (E) \u2014 click near the end of a line or arc to run it out to the next crossing'},
  guide: {tool:'guide', icon:'guide', title:'Offset guide (G) \u2014 click an edge, type the offset. Guides and their intersections snap.'},
  clearGuides:{id:'clearGuides', icon:'gclr', title:'Remove all guides'},
  undoBtn:{id:'undoBtn', icon:'undo', title:'Undo (Ctrl+Z)'},
@@ -1198,14 +2102,16 @@ var PANEL_BTNS = {
 var PANEL_GROUPS = [
  {id:'file',   label:'File',           btns:['newBtn','saveBtn','loadBtn']},
  {id:'create', label:'Create Vectors', btns:['select','line','rect','circle','arc','poly']},
+ {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','copyT','mirrorT','rotateT','arrayT','joinBtn','explodeBtn']},
  {id:'guides', label:'Guides',         btns:['guide','clearGuides']},
  {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']},
  {id:'display', label:'Display', html:
    '<div class="crow"><input type="color" id="colVec"><label for="colVec">Vectors</label></div>' +
-   '<div class="crow"><input type="color" id="colTp"><label for="colTp">Toolpath previews</label></div>'}
+   '<div class="crow"><input type="color" id="colTp"><label for="colTp">Toolpath previews</label></div>' +
+   '<div class="crow"><input type="color" id="colCon"><label for="colCon">Construction</label></div>'}
  /* D1.2 adds: {id:'edit', label:'Edit Vectors', btns:['fillet','trim','extend','offset',...]} */
 ];
-var UICFG = {order:null, collapsed:{}, colors:{vec:'#dce3ea', tp:'#b87f2e'}};
+var UICFG = {order:null, collapsed:{}, colors:{vec:'#dce3ea', tp:'#b87f2e', con:'#6b8cae'}, filletR:3};
 function uiCfgLoad(){
   try{
     var c = JSON.parse(localStorage.getItem('kerfDesignUI') || 'null');
@@ -1213,6 +2119,8 @@ function uiCfgLoad(){
       UICFG.order = c.order || null;
       UICFG.collapsed = c.collapsed || {};
       if (c.colors && c.colors.vec && c.colors.tp) UICFG.colors = c.colors;
+      if (!UICFG.colors.con) UICFG.colors.con = '#6b8cae';
+      if (c.filletR > 0) UICFG.filletR = c.filletR;
     }
   }catch(e){}
 }
@@ -1305,7 +2213,7 @@ function wirePanel(){
   document.getElementById('undoBtn').addEventListener('click', doUndo);
   document.getElementById('redoBtn').addEventListener('click', doRedo);
   document.getElementById('fitBtn2').addEventListener('click', fit);
-  [['colVec','vec'],['colTp','tp']].forEach(function(pair){
+  [['colVec','vec'],['colTp','tp'],['colCon','con']].forEach(function(pair){
     var inp = document.getElementById(pair[0]);
     if (!inp) return;
     inp.value = UICFG.colors[pair[1]];
@@ -1314,6 +2222,14 @@ function wirePanel(){
       uiCfgSave();
       draw();
     });
+  });
+  document.getElementById('joinBtn').addEventListener('click', function(){
+    if (!SEL.length){ stagePrompt('selFirst'); return; }
+    if (doJoin()){ persist(); draw(); }
+  });
+  document.getElementById('explodeBtn').addEventListener('click', function(){
+    if (!SEL.length){ stagePrompt('selFirst'); return; }
+    if (doExplode()){ persist(); draw(); }
   });
   document.getElementById('newBtn').addEventListener('click', function(){
     if (!DOC.ents.length && !DOC.guides.length) return;
@@ -1451,6 +2367,10 @@ function wire(){
     }
     var w = s2w(MOUSE.mx, MOUSE.my);
     MOUSE.snap = resolveSnap(w);
+    // marquee
+    if (TOOL==='select' && DRAW && DRAW.stage==='marq' && (e.buttons & 1)){
+      DRAW.ex = w.x; DRAW.ey = w.y;
+    }
     // dragging selection
     if (TOOL==='select' && DRAW && DRAW.stage==='drag' && SEL.length && (e.buttons & 1)){
       var dx = MOUSE.snap.x - DRAW.lx, dy = MOUSE.snap.y - DRAW.ly;
@@ -1466,6 +2386,28 @@ function wire(){
   cv.addEventListener('pointerup', function(){
     pan = null;
     if (TOOL==='select' && DRAW && DRAW.stage==='drag') DRAW = null;
+    else if (TOOL==='select' && DRAW && DRAW.stage==='marq'){
+      var m = DRAW; DRAW = null;
+      var a = w2s(m.sx, m.sy), b = w2s(m.ex, m.ey);
+      if (Math.hypot(b.x-a.x, b.y-a.y) < 4){        // it was a click on empty space
+        if (!m.shift) SEL = [];
+        draw(); return;
+      }
+      var crossing = m.ex < m.sx;                    // right-to-left = crossing select
+      var rx0 = Math.min(m.sx,m.ex), rx1 = Math.max(m.sx,m.ex);
+      var ry0 = Math.min(m.sy,m.ey), ry1 = Math.max(m.sy,m.ey);
+      var picked = [];
+      DOC.ents.forEach(function(en, i){
+        var bb = entBBox(en);
+        var inside = bb.x0 >= rx0 && bb.x1 <= rx1 && bb.y0 >= ry0 && bb.y1 <= ry1;
+        var touches = bb.x1 >= rx0 && bb.x0 <= rx1 && bb.y1 >= ry0 && bb.y0 <= ry1;
+        if (crossing ? touches : inside) picked.push(i);
+      });
+      if (m.shift){
+        picked.forEach(function(i){ if (SEL.indexOf(i) < 0) SEL.push(i); });
+      } else SEL = picked;
+      draw();
+    }
   });
   cv.addEventListener('wheel', function(e){
     e.preventDefault();
@@ -1483,7 +2425,12 @@ function wire(){
   var pin = document.getElementById('promptIn');
   pin.addEventListener('keydown', function(e){
     if (e.key === 'Enter'){ toolCommitText(pin.value); pin.value=''; }
-    if (e.key === 'Escape'){ DRAW = null; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); draw(); }
+    if (e.key === 'Escape'){
+      pin.value = ''; pin.blur();
+      if (DRAW){ DRAW = null; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); }
+      else if (TOOL !== 'select'){ setTool('select'); }
+      draw();
+    }
     e.stopPropagation();
   });
 
@@ -1492,7 +2439,12 @@ function wire(){
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.ctrlKey && e.key.toLowerCase() === 'z'){ e.preventDefault(); doUndo(); return; }
     if (e.ctrlKey && e.key.toLowerCase() === 'y'){ e.preventDefault(); doRedo(); return; }
-    if (e.key === 'Escape'){ DRAW = null; SEL = []; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); draw(); return; }
+    if (e.key === 'Escape'){
+      if (DRAW){ DRAW = null; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); }
+      else if (TOOL !== 'select'){ setTool('select'); }
+      else if (SEL.length){ SEL = []; }
+      draw(); return;
+    }
     if (e.key.toLowerCase() === 'd' && TOOL === 'select' && SEL.length === 2 && !e.ctrlKey){
       var r2 = relInfo(DOC.ents[SEL[0]], DOC.ents[SEL[1]]);
       if (r2.kind === 'angle'){
@@ -1540,7 +2492,15 @@ function wire(){
     }
     var toolBusy = (TOOL !== 'select') && (DRAW !== null || document.getElementById('promptBar').classList.contains('on'));
     if (!toolBusy){
-      var hot = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide'};
+      if ((e.key === 'x' || e.key === 'X') && SEL.length){
+        pushUndo();
+        SEL.forEach(function(i){
+          var en = DOC.ents[i];
+          if (en.con) delete en.con; else en.con = true;
+        });
+        persist(); draw(); return;
+      }
+      var hot = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide', f:'fillet', t:'trim', e:'extend', d:'copy', m:'mirror', o:'rotate', s:'offset'};
       if (hot[e.key.toLowerCase()] && !e.ctrlKey){ setTool(hot[e.key.toLowerCase()]); return; }
       if (e.key.toLowerCase() === 'f'){ fit(); return; }
     }
