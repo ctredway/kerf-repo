@@ -31,6 +31,20 @@
   header{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
   header .brand{font-weight:700;font-size:17px}
   header .brand span{color:var(--amber)}
+  #openControl{color:var(--amber);text-decoration:none;font-size:13px;font-weight:600;padding:5px 10px;border:1px solid var(--line);border-radius:5px;margin-right:8px}
+  #openControl:hover{border-color:var(--amber);background:rgba(232,163,61,0.08)}
+  #settingsBtn{font-size:13px}
+  #settingsModal{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:200}
+  #settingsModal[hidden]{display:none}
+  #settingsPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px 24px;min-width:340px;box-shadow:0 10px 40px rgba(0,0,0,0.5)}
+  #settingsPanel h3{margin:0 0 14px;font-size:16px}
+  #settingsPanel h4{margin:16px 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:0.4px;color:var(--muted)}
+  #settingsPanel .srow{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+  #settingsPanel .srow label{font-size:13px;color:var(--muted)}
+  #settingsPanel .srow .unit{font-size:12px;color:var(--muted)}
+  #settingsPanel input[type=number]{width:70px}
+  #settingsPanel input[type=color]{width:38px;height:24px;padding:0;border:1px solid var(--line);border-radius:4px;background:none;cursor:pointer}
+  #settingsPanel .snote{font-size:11.5px;color:var(--muted);margin:4px 0 0;line-height:1.4}
   header .sub{color:var(--muted);font-size:12.5px}
   header .spacer{flex:1}
 
@@ -77,15 +91,34 @@
     <div class="brand">Kerf<span> Design</span></div>
     <div class="sub" id="verSub">precision 2D sketcher</div>
     <div class="spacer"></div>
-    <label style="color:var(--muted);font-size:12.5px">Stock</label>
-    <input type="number" id="stkW" value="200" step="1" title="Stock width, mm"> ×
-    <input type="number" id="stkH" value="120" step="1" title="Stock height, mm"> mm
-    <select id="stkOrigin" title="Where X0 Y0 sits — match your Kerf job zero">
-      <option value="corner">zero at front-left</option>
-      <option value="center">zero at center</option>
-    </select>
+    <a id="openControl" href="index.html" title="Open Kerf Control (the machine sender)">Kerf Control ↗</a>
+    <button id="settingsBtn" title="Settings — stock size, display colors">⚙ Settings</button>
     <input type="file" id="loadFile" accept=".json,.crv,.dxf" hidden>
   </header>
+
+  <div id="settingsModal" hidden>
+    <div id="settingsPanel">
+      <h3>Settings</h3>
+      <h4>Material / stock</h4>
+      <div class="srow">
+        <label>Width</label><input type="number" id="stkW" value="200" step="1"> <span class="unit">mm</span>
+        <label style="margin-left:10px">Height</label><input type="number" id="stkH" value="120" step="1"> <span class="unit">mm</span>
+      </div>
+      <div class="srow">
+        <label>Job zero</label>
+        <select id="stkOrigin">
+          <option value="corner">front-left corner</option>
+          <option value="center">center of stock</option>
+        </select>
+      </div>
+      <p class="snote">Match this to where you set X0 Y0 on the machine in Kerf Control.</p>
+      <h4>Display colors</h4>
+      <div class="srow"><input type="color" id="colVec"><label for="colVec">Vectors</label></div>
+      <div class="srow"><input type="color" id="colTp"><label for="colTp">Toolpath previews</label></div>
+      <div class="srow"><input type="color" id="colCon"><label for="colCon">Construction</label></div>
+      <div class="srow" style="margin-top:14px"><button id="settingsDone" class="primary">Done</button></div>
+    </div>
+  </div>
 
   <div id="toolPanel"></div>
 
@@ -133,7 +166,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.22.2'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.23.0'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2746,11 +2779,7 @@ var PANEL_GROUPS = [
  {id:'create', label:'Create Vectors', btns:['select','line','rect','circle','arc','poly']},
  {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','copyT','mirrorT','rotateT','arrayT','joinBtn','explodeBtn']},
  {id:'guides', label:'Guides',         btns:['guide','clearGuides']},
- {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']},
- {id:'display', label:'Display', html:
-   '<div class="crow"><input type="color" id="colVec"><label for="colVec">Vectors</label></div>' +
-   '<div class="crow"><input type="color" id="colTp"><label for="colTp">Toolpath previews</label></div>' +
-   '<div class="crow"><input type="color" id="colCon"><label for="colCon">Construction</label></div>'}
+ {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']}
  /* D1.2 adds: {id:'edit', label:'Edit Vectors', btns:['fillet','trim','extend','offset',...]} */
 ];
 var UICFG = {order:null, collapsed:{}, colors:{vec:'#dce3ea', tp:'#b87f2e', con:'#6b8cae'}, filletR:3};
@@ -2855,16 +2884,6 @@ function wirePanel(){
   document.getElementById('undoBtn').addEventListener('click', doUndo);
   document.getElementById('redoBtn').addEventListener('click', doRedo);
   document.getElementById('fitBtn2').addEventListener('click', fit);
-  [['colVec','vec'],['colTp','tp'],['colCon','con']].forEach(function(pair){
-    var inp = document.getElementById(pair[0]);
-    if (!inp) return;
-    inp.value = UICFG.colors[pair[1]];
-    inp.addEventListener('input', function(){
-      UICFG.colors[pair[1]] = inp.value;
-      uiCfgSave();
-      draw();
-    });
-  });
   document.getElementById('joinBtn').addEventListener('click', function(){
     if (!SEL.length){ stagePrompt('selFirst'); return; }
     if (doJoin()){ persist(); draw(); }
@@ -2912,6 +2931,30 @@ function wire(){
       persist(); fit();
     });
   });
+  // display colors (now in the Settings modal, wired once)
+  [['colVec','vec'],['colTp','tp'],['colCon','con']].forEach(function(pair){
+    var inp = document.getElementById(pair[0]);
+    if (!inp) return;
+    inp.value = UICFG.colors[pair[1]];
+    inp.addEventListener('input', function(){
+      UICFG.colors[pair[1]] = inp.value;
+      uiCfgSave();
+      draw();
+    });
+  });
+  // Settings modal open/close
+  var settingsModal = document.getElementById('settingsModal');
+  function openSettings(){
+    // sync current stock into fields when opening
+    document.getElementById('stkW').value = DOC.stock.w;
+    document.getElementById('stkH').value = DOC.stock.h;
+    document.getElementById('stkOrigin').value = DOC.stock.origin;
+    settingsModal.hidden = false;
+  }
+  function closeSettings(){ settingsModal.hidden = true; }
+  document.getElementById('settingsBtn').addEventListener('click', openSettings);
+  document.getElementById('settingsDone').addEventListener('click', closeSettings);
+  settingsModal.addEventListener('pointerdown', function(e){ if (e.target === settingsModal) closeSettings(); });
 
   var IMP = {ex: null};
   function impClose(){ document.getElementById('impModal').hidden = true; IMP.ex = null; IMP.dxf = null; IMP.mode = null; }
