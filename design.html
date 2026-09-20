@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.17'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.18'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2237,21 +2237,21 @@ function tessPath(e, maxAng){
     pts.push([p0[0], p0[1]]);
     var b = p0[2] || 0;
     if (Math.abs(b) > 1e-9){
-      var th = 4*Math.atan(b);            // signed sweep; |th| may exceed PI for legacy data
+      var th = 4*Math.atan(b);            // signed included angle (+ = CCW), correct for any |th|
       var ch = Math.hypot(p1[0]-p0[0], p1[1]-p0[1]);
       if (ch > 1e-9){
-        var r = ch/(2*Math.abs(Math.sin(th/2)));
-        // center is offset from chord midpoint by the sagitta complement, on the side set by sweep sign;
-        // for |th|>PI the center sits on the far side, which cos(th/2) sign handles automatically.
-        var d = r * Math.cos(th/2);        // signed: negative when |th|>PI, flipping the center correctly
+        // signed radius and apothem so the center lands on the correct side (DXF bulge convention):
+        var rS = ch/(2*Math.sin(th/2));   // SIGNED radius
+        var apo = rS*Math.cos(th/2);      // SIGNED apothem
         var mx = (p0[0]+p1[0])/2, my = (p0[1]+p1[1])/2;
         var ux = (p1[0]-p0[0])/ch, uy = (p1[1]-p0[1])/ch;
-        var cx = mx - uy*d, cy = my + ux*d;
+        var cx = mx + (-uy)*apo, cy = my + (ux)*apo;   // offset along LEFT normal by signed apothem
+        var rAbs = Math.abs(rS);
         var a0 = Math.atan2(p0[1]-cy, p0[0]-cx), a1 = a0 + th;
         var st = Math.max(2, Math.ceil(Math.abs(th)/maxAng));
         for (var q = 1; q < st; q++){
           var a = a0 + (a1-a0)*q/st;
-          pts.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
+          pts.push([cx + rAbs*Math.cos(a), cy + rAbs*Math.sin(a)]);
         }
       }
     }
