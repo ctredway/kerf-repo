@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.5'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.10'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -1722,34 +1722,131 @@ function spanBulgeBetween(curve, P0, P1){
 }
 function filletPathVertex(pe, vi, r){
   var n = pe.pts.length;
-  var iPrev = (vi-1+n) % n, iNext = (vi+1) % n;
   if (!pe.closed && (vi === 0 || vi === n-1)) return null;
   var P = {x:pe.pts[vi][0], y:pe.pts[vi][1]};
-  var cIn  = spanCurve(pe.pts[iPrev], pe.pts[vi], pe.pts[iPrev][2] || 0);
-  var cOut = spanCurve(pe.pts[vi], pe.pts[iNext], pe.pts[vi][2] || 0);
+  // The incoming/outgoing geometry may be one span, or several consecutive co-circular
+  // arc sub-spans (fragOf splits arcs into <=90deg pieces on join). Walk outward from the
+  // corner across same-circle spans so the fillet can tangent anywhere along the whole arc.
+  function spanAt(a, b){ return spanCurve(pe.pts[a], pe.pts[b], pe.pts[a][2] || 0); }
+  function sameCircle(c1, c2){
+    // consecutive fragments of one original arc carry rounding of ~0.01mm in center/radius
+    // (from bulge tessellation of DXF-rounded coords), so use a generous geometric tolerance
+    if (!(c1 && c2 && c1.kind === 'arc' && c2.kind === 'arc')) return false;
+    var tol = 0.05 + c1.R * 0.003;
+    return Math.abs(c1.cx-c2.cx) < tol && Math.abs(c1.cy-c2.cy) < tol && Math.abs(c1.R-c2.R) < tol;
+  }
+  // incoming side: spans ... -> iPrev -> vi. Extend backward across co-circular arcs.
+  var iPrev = (vi-1+n) % n;
+  var cIn = spanAt(iPrev, vi);
+  var inStart = iPrev;                       // index of the vertex where the merged incoming curve starts
+  if (cIn && cIn.kind === 'arc'){
+    while (true){
+      var pj = (inStart-1+n) % n;
+      if (!pe.closed && inStart === 0) break;
+      var cj = spanAt(pj, inStart);
+      if (!sameCircle(cj, cIn)) break;
+      inStart = pj;
+    }
+    // rebuild cIn as the full arc from inStart to vi on that circle
+    cIn = {kind:'arc', cx:cIn.cx, cy:cIn.cy, R:cIn.R,
+           a0:Math.atan2(pe.pts[inStart][1]-cIn.cy, pe.pts[inStart][0]-cIn.cx),
+           a1:Math.atan2(P.y-cIn.cy, P.x-cIn.cx), ccw:cIn.ccw};
+  }
+  // outgoing side: spans vi -> iNext -> ... Extend forward across co-circular arcs.
+  var iNext = (vi+1) % n;
+  var cOut = spanAt(vi, iNext);
+  var outEnd = iNext;                        // vertex where merged outgoing curve ends
+  if (cOut && cOut.kind === 'arc'){
+    while (true){
+      var nj = (outEnd+1) % n;
+      if (!pe.closed && outEnd === n-1) break;
+      var cj2 = spanAt(outEnd, nj);
+      if (!sameCircle(cj2, cOut)) break;
+      outEnd = nj;
+    }
+    cOut = {kind:'arc', cx:cOut.cx, cy:cOut.cy, R:cOut.R,
+            a0:Math.atan2(P.y-cOut.cy, P.x-cOut.cx),
+            a1:Math.atan2(pe.pts[outEnd][1]-cOut.cy, pe.pts[outEnd][0]-cOut.cx), ccw:cOut.ccw};
+  }
   if (!cIn || !cOut) return null;
-  // best fillet center: valid tangency on BOTH spans, nearest the corner
+
+  // For a closed profile the fillet center must lie INSIDE it — that is the discriminator
+  // that rejects wrong-side tangent solutions. Test against a finely tessellated outline
+  // (coarse sampling misfires near edges). Among interior candidates, pick the one whose
+  // tangent points sit nearest the corner.
+  var outline = pe.closed ? tessPath(pe, 0.03) : null;
+  function insideProfile(O){
+    if (!outline) return true;
+    var x = O.x, y = O.y, c = false;
+    for (var a = 0, b = outline.length-1; a < outline.length; b = a++){
+      var xi = outline[a][0], yi = outline[a][1], xj = outline[b][0], yj = outline[b][1];
+      if (((yi > y) !== (yj > y)) && (x < (xj-xi)*(y-yi)/(yj-yi) + xi)) c = !c;
+    }
+    return c;
+  }
+  // tangency that falls back to the underlying circle for arc spans (the merged arc's angular
+  // clamp is unreliable across split fragments; the inside-profile test is what guarantees
+  // correctness, so here we just need the geometric tangent point on the right circle/line).
+  function tangatePt(curve, O){
+    if (curve.kind === 'line'){
+      var dx = curve.bx-curve.ax, dy = curve.by-curve.ay, L2 = dx*dx+dy*dy;
+      if (L2 < 1e-18) return null;
+      var t = ((O.x-curve.ax)*dx + (O.y-curve.ay)*dy) / L2;
+      if (t < -0.02 || t > 1.02) return null;              // roughly on the segment
+      return {x:curve.ax + dx*t, y:curve.ay + dy*t};
+    }
+    var d = Math.hypot(O.x-curve.cx, O.y-curve.cy);
+    if (d < 1e-9) return null;
+    return {x:curve.cx + (O.x-curve.cx)*curve.R/d, y:curve.cy + (O.y-curve.cy)*curve.R/d};
+  }
   var best = null;
   filletCenters(cIn, cOut, r).forEach(function(O){
-    var T1 = tangencyOn(cIn, O), T2 = tangencyOn(cOut, O);
+    if (pe.closed && !insideProfile(O)) return;            // interior side only — the key filter
+    var T1 = tangatePt(cIn, O), T2 = tangatePt(cOut, O);
     if (!T1 || !T2) return;
-    var d = Math.hypot(O.x-P.x, O.y-P.y);
-    if (!best || d < best.d) best = {O:O, T1:T1, T2:T2, d:d};
+    var score = Math.hypot(T1.x-P.x, T1.y-P.y) + Math.hypot(T2.x-P.x, T2.y-P.y);
+    if (!best || score < best.score) best = {O:O, T1:T1, T2:T2, score:score};
   });
   if (!best) return null;
-  // fillet arc T1 -> T2 around O: minor direction
+
   var aT1 = Math.atan2(best.T1.y-best.O.y, best.T1.x-best.O.x);
   var aT2 = Math.atan2(best.T2.y-best.O.y, best.T2.x-best.O.x);
   var ccwF = angNorm(aT2-aT1) <= Math.PI;
   var swF = ccwF ? angNorm(aT2-aT1) : angNorm(aT1-aT2);
   var bulgeF = Math.tan(swF/4) * (ccwF ? 1 : -1);
-  // rebuild: incoming span shortens to T1 (its bulge recomputed if an arc),
-  // fillet span T1->T2, outgoing span T2->next (bulge recomputed if an arc)
-  var pts = pe.pts.map(function(pt){ return pt.slice(); });
-  pts[iPrev][2] = spanBulgeBetween(cIn, {x:pts[iPrev][0], y:pts[iPrev][1]}, best.T1);
-  var outBulge = spanBulgeBetween(cOut, best.T2, {x:pe.pts[iNext][0], y:pe.pts[iNext][1]});
-  pts.splice(vi, 1, [best.T1.x, best.T1.y, bulgeF], [best.T2.x, best.T2.y, outBulge]);
-  return {t:'path', pts:pts, closed:pe.closed};
+
+  // Rebuild the path: keep everything up to inStart, put the trimmed incoming curve
+  // (inStart -> T1), the fillet (T1 -> T2), then the trimmed outgoing curve (T2 -> outEnd),
+  // then everything from outEnd onward. inStart..vi..outEnd (the swallowed span run) is replaced.
+  var inBulge = spanBulgeBetween(cIn, {x:pe.pts[inStart][0], y:pe.pts[inStart][1]}, best.T1);
+  var outBulge = spanBulgeBetween(cOut, best.T2, {x:pe.pts[outEnd][0], y:pe.pts[outEnd][1]});
+
+  // collect kept indices as a linear list starting AFTER outEnd, going around to inStart
+  var keep = [];
+  var i = outEnd;
+  while (true){
+    keep.push(i);
+    if (i === inStart) break;
+    i = (i+1) % n;
+    if (keep.length > n) return null; // safety
+  }
+  // keep currently = [outEnd, outEnd+1, ..., inStart]; we want the run that EXCLUDES the
+  // swallowed vertices (inStart+1 .. outEnd-1 through vi). Rebuild pts in path order:
+  // start at inStart, its bulge -> T1; T1 bulge -> T2 (fillet); T2 bulge -> outEnd; then outEnd..around..back to inStart-1.
+  var out = [];
+  out.push([pe.pts[inStart][0], pe.pts[inStart][1], inBulge]);
+  out.push([best.T1.x, best.T1.y, bulgeF]);
+  out.push([best.T2.x, best.T2.y, outBulge]);
+  // walk from outEnd forward around to the vertex just before inStart
+  var j = outEnd;
+  while (j !== inStart){
+    out.push([pe.pts[j][0], pe.pts[j][1], pe.pts[j][2] || 0]);
+    j = (j+1) % n;
+  }
+  // 'out' now starts at inStart and ends just before inStart -> proper closed ordering,
+  // but we duplicated inStart's position conceptually; the first element IS inStart. Good.
+  // However the walk added outEnd..(inStart-1); the first pushed (inStart) closes the loop.
+  return {t:'path', pts:out, closed:pe.closed};
 }
 function doFillet(w, r){
   var tol = 10/VIEW.scale;
