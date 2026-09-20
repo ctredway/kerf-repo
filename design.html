@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.18'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.19'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2941,16 +2941,18 @@ function wire(){
       if (hot[e.key.toLowerCase()] && !e.ctrlKey){ setTool(hot[e.key.toLowerCase()]); return; }
       if (e.key.toLowerCase() === 'f'){ fit(); return; }
     }
+    // if the entry field already has focus, let ITS handler own typing and Enter
+    var pinEl = document.getElementById('promptIn');
+    if (document.activeElement === pinEl) return;
     // any printable char while a tool is live routes into the entry bar
     if (TOOL !== 'select' && e.key.length === 1 && !e.ctrlKey && !e.altKey){
-      var pin2 = document.getElementById('promptIn');
       document.getElementById('promptBar').classList.add('on');
-      pin2.focus();
-      pin2.value += e.key;
+      pinEl.focus();
+      pinEl.value += e.key;
       e.preventDefault();
       return;
     }
-    if (e.key === 'Enter' && TOOL !== 'select'){ toolCommitText(''); return; }
+    if (e.key === 'Enter' && TOOL !== 'select'){ toolCommitText(pinEl.value); pinEl.value=''; return; }
     if (e.key.toLowerCase() === 'f' && TOOL === 'select'){ fit(); return; }
   });
 
