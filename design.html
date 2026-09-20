@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.21'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.22'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -381,6 +381,8 @@ function stagePrompt(key){
 function setTool(t){
   TOOL = t; DRAW = null;
   if (!/^(copy|mirror|rotate|array|offset)$/.test(t)) SEL = [];
+  var pinEl = document.getElementById('promptIn');
+  if (pinEl){ pinEl.value = ''; pinEl.blur(); }
   hidePrompt();
   if (t !== 'select') stagePrompt(t + '0');
   document.querySelectorAll('#toolPanel .tool[data-tool]').forEach(function(b){
@@ -768,8 +770,9 @@ function showPrompt(label, val, selectAll){
   var i = document.getElementById('promptIn');
   i.value = val || '';
   document.getElementById('promptBar').classList.add('on');
-  i.focus();
-  if (selectAll) i.select();
+  // Do NOT auto-focus: focusing here steals the first canvas click from click-based tools
+  // (trim, extend, fillet corners). The field receives focus when the user starts typing.
+  if (selectAll){ i.focus(); i.select(); }
 }
 function hidePrompt(){
   document.getElementById('promptBar').classList.remove('on');
