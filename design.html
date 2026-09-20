@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.2'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.3'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2035,71 +2035,93 @@ function revFrag(f){
 }
 function doJoin(){
   var tol = 0.05;
+  // each fragment is a list of vertices [x,y,bulge]; bulge lives on the vertex that STARTS its span
   var frags = [], src = [];
   SEL.forEach(function(i){
     var f = fragOf(DOC.ents[i]);
-    if (f){ frags.push(f); src.push(i); }
+    if (f){ frags.push(f.map(function(v){ return v.slice(); })); src.push(i); }
   });
   if (frags.length < 2) return false;
-  pushUndo();
-  var chains = [];
+
+  function endpt(f, which){ return which ? f[f.length-1] : f[0]; }
+  function near(a, b){ return Math.hypot(a[0]-b[0], a[1]-b[1]) < tol; }
+  // reverse a fragment: vertex order flips AND each span's bulge moves to its new start vertex, negated
+  function rev(f){
+    var n = f.length, out = [];
+    for (var i = n-1; i >= 0; i--){
+      var bulge = i > 0 ? -(f[i-1][2] || 0) : 0; // span that was (i-1 -> i) now runs (i -> i-1)
+      out.push([f[i][0], f[i][1], bulge]);
+    }
+    return out;
+  }
+
   var used = frags.map(function(){ return false; });
+  var chains = [];
   for (var st = 0; st < frags.length; st++){
     if (used[st]) continue;
     used[st] = true;
-    var ch = frags[st].map(function(pt){ return pt.slice(); });
+    var ch = frags[st].map(function(v){ return v.slice(); });
     var grew = true;
     while (grew){
       grew = false;
       for (var k = 0; k < frags.length; k++){
         if (used[k]) continue;
         var f = frags[k];
-        var he = ch[ch.length-1], hs = ch[0];
-        var fs = f[0], fe = f[f.length-1];
-        var cand = null;
-        if (Math.hypot(he[0]-fs[0], he[1]-fs[1]) < tol) cand = f;
-        else if (Math.hypot(he[0]-fe[0], he[1]-fe[1]) < tol) cand = revFrag(f);
-        if (cand){
-          ch[ch.length-1][2] = cand[0][2];       // joint vertex carries the incoming span's bulge
-          for (var q = 1; q < cand.length; q++) ch.push(cand[q].slice());
-          used[k] = true; grew = true; continue;
+        var tail = ch[ch.length-1], head = ch[0];
+        // append to tail: tail must coincide with f's start (or reversed f's start)
+        if (near(tail, endpt(f, 0))){
+          tail[2] = f[0][2] || 0;                       // joint carries the incoming span's bulge
+          for (var a = 1; a < f.length; a++) ch.push(f[a].slice());
+          used[k] = true; grew = true; break;
         }
-        if (Math.hypot(hs[0]-fe[0], hs[1]-fe[1]) < tol) cand = f;
-        else if (Math.hypot(hs[0]-fs[0], hs[1]-fs[1]) < tol) cand = revFrag(f);
-        if (cand){
-          cand[cand.length-1][2] = ch[0][2] || cand[cand.length-1][2];
-          var head = cand.slice(0, cand.length-1);
-          cand[cand.length-1][2] = 0;
-          // prepend: cand's last point coincides with chain start
-          ch[0][2] = ch[0][2]; // chain start keeps its own outgoing bulge
-          var pre = cand.slice(0, cand.length-1);
-          ch = pre.concat(ch);
-          used[k] = true; grew = true;
+        if (near(tail, endpt(f, 1))){
+          var fr = rev(f);
+          tail[2] = fr[0][2] || 0;
+          for (var a2 = 1; a2 < fr.length; a2++) ch.push(fr[a2].slice());
+          used[k] = true; grew = true; break;
+        }
+        // prepend to head: f's end must coincide with head
+        if (near(head, endpt(f, 1))){
+          var pre = f.slice(0, f.length-1);           // f minus its last vertex (which == head)
+          ch = pre.map(function(v){ return v.slice(); }).concat(ch);
+          used[k] = true; grew = true; break;
+        }
+        if (near(head, endpt(f, 0))){
+          var fr2 = rev(f);
+          var pre2 = fr2.slice(0, fr2.length-1);
+          ch = pre2.map(function(v){ return v.slice(); }).concat(ch);
+          used[k] = true; grew = true; break;
         }
       }
     }
-    var closed = ch.length > 2 && Math.hypot(ch[0][0]-ch[ch.length-1][0], ch[0][1]-ch[ch.length-1][1]) < tol;
+    // close if the chain's two ends meet
+    var closed = ch.length > 2 && near(ch[0], ch[ch.length-1]);
     if (closed){
-      ch[ch.length-1][2] = ch[ch.length-1][2] || 0;
-      // last point duplicates first: its bulge becomes the closing span's, stored on the (removed) last -> move to end-1
-      var closingBulge = ch[ch.length-1][2];
+      // ch[last] duplicates ch[0]. The closing span is ch[last-1] -> ch[0].
+      // Its bulge must live on ch[last-1]. If the closing fragment was an arc appended tail-first,
+      // its start-bulge was written onto ch[last-1] already (the joint) OR onto the duplicate ch[last].
+      // Take whichever is nonzero so the cap survives, then drop the duplicate.
+      var dupBulge = ch[ch.length-1][2] || 0;
       ch.pop();
-      ch[ch.length-1][2] = closingBulge || ch[ch.length-1][2];
+      var lastReal = ch[ch.length-1];
+      if (Math.abs(lastReal[2] || 0) < 1e-12 && Math.abs(dupBulge) > 1e-12)
+        lastReal[2] = dupBulge;
     }
     chains.push({pts:ch, closed:closed});
   }
-  // replace source entities with the chained paths
+
+  pushUndo();
   var keep = DOC.ents.filter(function(_, i){ return src.indexOf(i) < 0; });
   chains.forEach(function(c){
-    keep.push(c.pts.every(function(pt){ return Math.abs(pt[2]) < 1e-12; })
-      ? {t:'poly', pts:c.pts.map(function(pt){ return [pt[0],pt[1]]; }), closed:c.closed}
-      : {t:'path', pts:c.pts, closed:c.closed});
+    var allStraight = c.pts.every(function(pt){ return Math.abs(pt[2] || 0) < 1e-12; });
+    keep.push(allStraight
+      ? {t:'poly', pts:c.pts.map(function(pt){ return [pt[0], pt[1]]; }), closed:c.closed}
+      : {t:'path', pts:c.pts.map(function(pt){ return [pt[0], pt[1], pt[2] || 0]; }), closed:c.closed});
   });
   DOC.ents = keep;
   SEL = [];
   return true;
 }
-// ---- explode: rect/poly -> lines; path -> lines + arcs
 function doExplode(){
   if (!SEL.length) return false;
   var any = false;
