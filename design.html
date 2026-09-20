@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.1'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.2'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -1418,7 +1418,12 @@ function primsOf(e){
   else entityEdges(e).forEach(function(ed){ out.push({c:0, x1:ed[0],y1:ed[1],x2:ed[2],y2:ed[3]}); });
   return out;
 }
-function angNorm(a){ while (a < 0) a += 2*Math.PI; while (a >= 2*Math.PI) a -= 2*Math.PI; return a; }
+function angNorm(a){
+  if (!isFinite(a)) return 0;
+  a = a % (2*Math.PI);
+  if (a < 0) a += 2*Math.PI;
+  return a;
+}
 function arcSweepOf(a0, a1, ccw){
   var d = ccw ? angNorm(a1-a0) : angNorm(a0-a1);
   return d < 1e-12 ? 2*Math.PI : d;
