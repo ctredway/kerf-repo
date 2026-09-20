@@ -84,7 +84,7 @@
       <option value="corner">zero at front-left</option>
       <option value="center">zero at center</option>
     </select>
-    <input type="file" id="loadFile" accept=".json,.crv" hidden>
+    <input type="file" id="loadFile" accept=".json,.crv,.dxf" hidden>
   </header>
 
   <div id="toolPanel"></div>
@@ -100,10 +100,15 @@
 
   <div id="impModal" hidden>
     <div id="impPanel">
-      <h3>Import VCarve file</h3>
+      <h3 id="impTitle">Import VCarve file</h3>
       <div class="row"><span id="impStock" style="color:var(--muted)"></span></div>
-      <div class="row"><input type="checkbox" id="impDrawing" checked><label for="impDrawing" id="impDrawingLbl">Drawing vectors</label></div>
-      <div class="row"><input type="checkbox" id="impPreview"><label for="impPreview" id="impPreviewLbl">Toolpath preview vectors</label></div>
+      <div class="row impCrvRow"><input type="checkbox" id="impDrawing" checked><label for="impDrawing" id="impDrawingLbl">Drawing vectors</label></div>
+      <div class="row impCrvRow"><input type="checkbox" id="impPreview"><label for="impPreview" id="impPreviewLbl">Toolpath preview vectors</label></div>
+      <div class="row impDxfRow" hidden>
+        <label>Scale to width</label><input type="number" id="impWidth" style="width:80px" step="0.1" placeholder="1:1">
+        <span style="color:var(--faint)">mm (blank = no scaling)</span>
+      </div>
+      <div class="row impDxfRow" hidden><input type="checkbox" id="impOrigin" checked><label for="impOrigin">Move to origin (bottom-left of content to 0,0)</label></div>
       <div class="row" style="margin-top:6px">
         <span style="color:var(--muted)">Job units:</span>
         <input type="radio" name="impUnits" id="impMM" checked><label for="impMM">mm</label>
@@ -128,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.20.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.1'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -360,6 +365,7 @@ var STAGE_LABEL = {
   trim0:  'Trim \u2014 click the piece to remove (lines, arcs, circles); crossings bound the cut',
   extend0:'Extend \u2014 click near the end of a line or arc to run it to the next crossing',
   editMiss:'Nothing there \u2014 click a corner (fillet) or a line/arc/circle (trim, extend)',
+  filletFit:'Fillet didn\u2019t fit \u2014 radius too large for those legs (type a smaller radius), or the spans meet tangentially',
   arc0:   'Arc \u2014 click start point, or type "x,y"',
   arc1:   'Arc \u2014 click end point, or type "x,y" / "@dx,dy" / "10<45"',
   arc2:   'Arc \u2014 move to bow the arc, click to place \u00b7 or type radius ("+" bows left of start\u2192end, "\u2212" right)',
@@ -477,7 +483,7 @@ function toolClick(w, snap){
   }
   else if (TOOL === 'fillet'){
     if (doFillet(w, UICFG.filletR)){ persist(); stagePrompt('fillet0'); }
-    else stagePrompt('editMiss');
+    else stagePrompt(doFillet.lastMiss === 'fit' ? 'filletFit' : 'editMiss');
   }
   else if (TOOL === 'trim'){
     if (doTrim(w)){ persist(); stagePrompt('trim0'); }
@@ -934,6 +940,226 @@ function crvToDoc(ex, scale){
   });
   return {stock:{w: Math.max(10, ex.stockW*scale), h: Math.max(10, ex.stockH*scale), origin:'corner'},
           ents: ents, guides: []};
+}
+
+/* ---------------- DXF import ----------------
+   Text group-code pairs. Maps LINE/CIRCLE/ARC 1:1, LWPOLYLINE straight to the
+   point+bulge path model (identical convention), samples SPLINE (NURBS) and
+   ELLIPSE. Skipped entity types are counted and reported. */
+function dxfParsePairs(text){
+  var lines = text.split(/\r\n|\r|\n/);
+  var pairs = [];
+  for (var i = 0; i + 1 < lines.length; i += 2){
+    var code = parseInt(lines[i].trim(), 10);
+    if (isNaN(code)) { i--; continue; }
+    pairs.push([code, lines[i+1].trim()]);
+  }
+  return pairs;
+}
+function dxfNurbsSample(degree, knots, ctrl, weights, closed, nSamples){
+  var n = ctrl.length - 1;
+  function findSpan(u){
+    if (u >= knots[n+1]) return n;
+    var lo = degree, hi = n+1;
+    var mid = (lo+hi) >> 1;
+    while (u < knots[mid] || u >= knots[mid+1]){
+      if (u < knots[mid]) hi = mid; else lo = mid;
+      mid = (lo+hi) >> 1;
+    }
+    return mid;
+  }
+  function basis(span, u){
+    var N = [1], left = [], right = [];
+    for (var j = 1; j <= degree; j++){
+      left[j] = u - knots[span+1-j];
+      right[j] = knots[span+j] - u;
+      var saved = 0;
+      for (var r = 0; r < j; r++){
+        var tmp = N[r] / (right[r+1] + left[j-r]);
+        N[r] = saved + right[r+1]*tmp;
+        saved = left[j-r]*tmp;
+      }
+      N[j] = saved;
+    }
+    return N;
+  }
+  var u0 = knots[degree], u1 = knots[n+1];
+  var out = [];
+  for (var k = 0; k <= nSamples; k++){
+    var u = u0 + (u1-u0)*k/nSamples;
+    if (k === nSamples) u = u1 - (u1-u0)*1e-9;
+    var span = findSpan(u), N2 = basis(span, u);
+    var x = 0, y = 0, wsum = 0;
+    for (var j2 = 0; j2 <= degree; j2++){
+      var idx = span - degree + j2;
+      var wgt = weights ? weights[idx] : 1;
+      x += N2[j2]*wgt*ctrl[idx][0];
+      y += N2[j2]*wgt*ctrl[idx][1];
+      wsum += N2[j2]*wgt;
+    }
+    out.push([x/wsum, y/wsum]);
+  }
+  return out;
+}
+function dxfExtract(text){
+  var pairs = dxfParsePairs(text);
+  var i = 0, n = pairs.length;
+  var units = 0; // $INSUNITS: 1=in, 4=mm, 0=unitless
+  var ents = [], skipped = {};
+  // header: find $INSUNITS
+  for (var h = 0; h < n-1; h++){
+    if (pairs[h][0] === 9 && pairs[h][1] === '$INSUNITS'){
+      for (var h2 = h+1; h2 < Math.min(h+4, n); h2++)
+        if (pairs[h2][0] === 70){ units = parseInt(pairs[h2][1], 10) || 0; break; }
+      break;
+    }
+  }
+  // find ENTITIES section
+  var inEnts = false;
+  while (i < n){
+    var pr = pairs[i];
+    if (pr[0] === 0 && pr[1] === 'SECTION' && i+1 < n && pairs[i+1][0] === 2){
+      inEnts = pairs[i+1][1] === 'ENTITIES';
+      i += 2; continue;
+    }
+    if (pr[0] === 0 && pr[1] === 'ENDSEC'){ inEnts = false; i++; continue; }
+    if (!inEnts || pr[0] !== 0){ i++; continue; }
+    // entity start: collect its pairs until next code-0
+    var type = pr[1]; i++;
+    var g = {};       // last value per code
+    var multi = {};   // arrays for repeating codes
+    while (i < n && pairs[i][0] !== 0){
+      var c = pairs[i][0], v = pairs[i][1];
+      g[c] = v;
+      (multi[c] = multi[c] || []).push(v);
+      i++;
+    }
+    function f(code, m){ return parseFloat((m||g)[code]); }
+    function arr(code){ return (multi[code] || []).map(parseFloat); }
+    if (type === 'LINE'){
+      ents.push({t:'line', x1:f(10), y1:f(20), x2:f(11), y2:f(21)});
+    } else if (type === 'CIRCLE'){
+      ents.push({t:'circle', cx:f(10), cy:f(20), r:f(40)});
+    } else if (type === 'ARC'){
+      var a0 = f(50)*Math.PI/180, a1 = f(51)*Math.PI/180;
+      ents.push({t:'arc', cx:f(10), cy:f(20), r:f(40), a0:a0, a1:a1, ccw:true});
+    } else if (type === 'LWPOLYLINE'){
+      var xs = arr(10), ys = arr(20), bs = arr(42);
+      var flags = parseInt(g[70] || '0', 10);
+      var closed = !!(flags & 1);
+      // bulge code 42 may be sparse: rebuild per-vertex by walking pairs again is complex;
+      // common case: exporters emit 42 only when nonzero, in vertex order interleaved.
+      // Reconstruct by re-walking this entity's pair stream:
+      ents.push({t:'_lw', xs:xs, ys:ys, closed:closed, rawPairs:null});
+      var lw = ents[ents.length-1];
+      lw.bulges = new Array(xs.length);
+      for (var q = 0; q < xs.length; q++) lw.bulges[q] = 0;
+      lw._pending = true;
+    } else if (type === 'POLYLINE'){
+      // old-style: vertices follow as VERTEX entities until SEQEND
+      var pl = {t:'_pl', pts:[], closed: !!(parseInt(g[70]||'0',10) & 1)};
+      ents.push(pl);
+    } else if (type === 'VERTEX'){
+      var last = ents[ents.length-1];
+      if (last && last.t === '_pl') last.pts.push([f(10), f(20), f(42) || 0]);
+    } else if (type === 'SEQEND'){
+      /* closes the POLYLINE */
+    } else if (type === 'SPLINE'){
+      var deg = parseInt(g[71] || '3', 10);
+      var kn = arr(40), cx2 = arr(10), cy2 = arr(20), wts = arr(41);
+      var ctrl = cx2.map(function(x, ix){ return [x, cy2[ix]]; });
+      if (ctrl.length > deg && kn.length >= ctrl.length + deg + 1){
+        var samples = Math.min(400, Math.max(24, ctrl.length * 8));
+        var ptsS = dxfNurbsSample(deg, kn, ctrl, wts.length === ctrl.length ? wts : null,
+                                  false, samples);
+        var closedS = !!(parseInt(g[70]||'0',10) & 1);
+        ents.push({t:'poly', pts:ptsS, closed:closedS});
+      } else skipped.SPLINE = (skipped.SPLINE||0)+1;
+    } else if (type === 'ELLIPSE'){
+      var ecx = f(10), ecy = f(20), emx = f(11), emy = f(21);
+      var ratio = f(40), t0 = f(41), t1 = f(42);
+      if (t1 <= t0) t1 += 2*Math.PI;
+      var maj = Math.hypot(emx, emy), ang = Math.atan2(emy, emx);
+      var stepsE = Math.max(16, Math.ceil((t1-t0)/0.1));
+      var ptsE = [];
+      for (var ke = 0; ke <= stepsE; ke++){
+        var t = t0 + (t1-t0)*ke/stepsE;
+        var ex = maj*Math.cos(t), ey = maj*ratio*Math.sin(t);
+        ptsE.push([ecx + ex*Math.cos(ang) - ey*Math.sin(ang),
+                   ecy + ex*Math.sin(ang) + ey*Math.cos(ang)]);
+      }
+      var fullE = Math.abs((t1-t0) - 2*Math.PI) < 1e-6;
+      if (fullE) ptsE.pop();
+      ents.push({t:'poly', pts:ptsE, closed:fullE});
+    } else {
+      skipped[type] = (skipped[type]||0)+1;
+    }
+  }
+  // second pass: LWPOLYLINE bulge alignment needs interleaved order; re-walk stream
+  var lwQueue = ents.filter(function(e){ return e.t === '_lw'; });
+  if (lwQueue.length){
+    var qi = 0, j = 0;
+    while (j < n && qi < lwQueue.length){
+      if (pairs[j][0] === 0 && pairs[j][1] === 'LWPOLYLINE'){
+        var lw2 = lwQueue[qi++];
+        j++;
+        var vi = -1;
+        while (j < n && pairs[j][0] !== 0){
+          if (pairs[j][0] === 10) vi++;
+          else if (pairs[j][0] === 42 && vi >= 0 && vi < lw2.bulges.length)
+            lw2.bulges[vi] = parseFloat(pairs[j][1]);
+          j++;
+        }
+      } else j++;
+    }
+  }
+  // finalize placeholder types
+  var out = [];
+  ents.forEach(function(e){
+    if (e.t === '_lw'){
+      var pts = e.xs.map(function(x, ix){ return [x, e.ys[ix], e.bulges[ix] || 0]; });
+      if (pts.length < 2) return;
+      out.push(pts.every(function(pt){ return Math.abs(pt[2]) < 1e-12; })
+        ? {t:'poly', pts:pts.map(function(pt){ return [pt[0], pt[1]]; }), closed:e.closed}
+        : {t:'path', pts:pts, closed:e.closed});
+    } else if (e.t === '_pl'){
+      if (e.pts.length < 2) return;
+      out.push(e.pts.every(function(pt){ return Math.abs(pt[2]) < 1e-12; })
+        ? {t:'poly', pts:e.pts.map(function(pt){ return [pt[0], pt[1]]; }), closed:e.closed}
+        : {t:'path', pts:e.pts, closed:e.closed});
+    } else out.push(e);
+  });
+  return {ents:out, units:units, skipped:skipped};
+}
+function dxfBBox(ents){
+  var b = null;
+  ents.forEach(function(e){
+    var eb = entBBox(e);
+    b = b ? {x0:Math.min(b.x0,eb.x0), y0:Math.min(b.y0,eb.y0),
+             x1:Math.max(b.x1,eb.x1), y1:Math.max(b.y1,eb.y1)} : eb;
+  });
+  return b || {x0:0,y0:0,x1:0,y1:0};
+}
+function dxfToDoc(ex, scale, toOrigin, keepStock){
+  var ents = ex.ents.map(cloneEnt);
+  var dx = 0, dy = 0;
+  if (scale !== 1){
+    ents.forEach(function(e){
+      // uniform scale about origin
+      if (e.t === 'line'){ e.x1*=scale; e.y1*=scale; e.x2*=scale; e.y2*=scale; }
+      else if (e.t === 'circle'){ e.cx*=scale; e.cy*=scale; e.r*=scale; }
+      else if (e.t === 'arc'){ e.cx*=scale; e.cy*=scale; e.r*=scale; }
+      else if (e.t === 'rect'){ e.x*=scale; e.y*=scale; e.w*=scale; e.h*=scale; }
+      else if (e.pts){ e.pts = e.pts.map(function(pt){
+        return pt.length > 2 ? [pt[0]*scale, pt[1]*scale, pt[2]] : [pt[0]*scale, pt[1]*scale]; }); }
+    });
+  }
+  if (toOrigin){
+    var bb = dxfBBox(ents);
+    dx = -bb.x0; dy = -bb.y0;
+    ents.forEach(function(e){ moveEntity(e, dx, dy); });
+  }
+  return {stock: keepStock, ents: ents, guides: []};
 }
 
 /* ---------------- persistence ---------------- */
@@ -1414,35 +1640,115 @@ function polyToPath(e){
 function rectToPath(e){
   return {t:'path', closed:true, pts:[[e.x,e.y,0],[e.x+e.w,e.y,0],[e.x+e.w,e.y+e.h,0],[e.x,e.y+e.h,0]]};
 }
+function spanCurve(p0, p1, bulge){
+  // geometric description of one span for fillet math
+  if (Math.abs(bulge) < 1e-12)
+    return {kind:'line', ax:p0[0], ay:p0[1], bx:p1[0], by:p1[1]};
+  var th = 4*Math.atan(bulge);
+  var ch = Math.hypot(p1[0]-p0[0], p1[1]-p0[1]);
+  if (ch < 1e-12) return null;
+  var R = ch/(2*Math.sin(Math.abs(th)/2));
+  var mx = (p0[0]+p1[0])/2, my = (p0[1]+p1[1])/2;
+  var h = Math.sqrt(Math.max(R*R - ch*ch/4, 0)) * (th > 0 ? 1 : -1);
+  var ux = (p1[0]-p0[0])/ch, uy = (p1[1]-p0[1])/ch;
+  return {kind:'arc', cx:mx - uy*h, cy:my + ux*h, R:R, ccw: th > 0,
+          a0:Math.atan2(p0[1]-(my+ux*h), p0[0]-(mx-uy*h)),
+          a1:Math.atan2(p1[1]-(my+ux*h), p1[0]-(mx-uy*h))};
+}
+function tangencyOn(curve, O){
+  // foot of tangency of a circle centered O against the curve; null if off-span
+  if (curve.kind === 'line'){
+    var dx = curve.bx-curve.ax, dy = curve.by-curve.ay;
+    var L2 = dx*dx+dy*dy;
+    if (L2 < 1e-18) return null;
+    var t = ((O.x-curve.ax)*dx + (O.y-curve.ay)*dy) / L2;
+    if (t < 1e-7 || t > 1-1e-7) return null;
+    return {x:curve.ax + dx*t, y:curve.ay + dy*t};
+  }
+  var d = Math.hypot(O.x-curve.cx, O.y-curve.cy);
+  if (d < 1e-12) return null;
+  var T = {x:curve.cx + (O.x-curve.cx)*curve.R/d, y:curve.cy + (O.y-curve.cy)*curve.R/d};
+  var ang = Math.atan2(T.y-curve.cy, T.x-curve.cx);
+  var sw = curve.ccw ? angNorm(curve.a1-curve.a0) : angNorm(curve.a0-curve.a1);
+  if (sw < 1e-12) sw = 2*Math.PI;
+  var sp = curve.ccw ? angNorm(ang-curve.a0) : angNorm(curve.a0-ang);
+  if (sp < 1e-7 || sp > sw - 1e-7) return null;
+  return T;
+}
+function filletCenters(c1, c2, r){
+  // candidate fillet centers: distance r from both curves
+  var lines = [], out = [];
+  function lineOffsets(c){
+    var dx = c.bx-c.ax, dy = c.by-c.ay, L = Math.hypot(dx,dy);
+    var nx = -dy/L, ny = dx/L;
+    return [{kind:'line', ax:c.ax+nx*r, ay:c.ay+ny*r, bx:c.bx+nx*r, by:c.by+ny*r},
+            {kind:'line', ax:c.ax-nx*r, ay:c.ay-ny*r, bx:c.bx-nx*r, by:c.by-ny*r}];
+  }
+  function circOffsets(c){
+    var o = [{kind:'circ', cx:c.cx, cy:c.cy, R:c.R + r}];
+    if (c.R - r > 1e-6) o.push({kind:'circ', cx:c.cx, cy:c.cy, R:c.R - r});
+    return o;
+  }
+  var o1 = c1.kind === 'line' ? lineOffsets(c1) : circOffsets(c1);
+  var o2 = c2.kind === 'line' ? lineOffsets(c2) : circOffsets(c2);
+  o1.forEach(function(a){
+    o2.forEach(function(b){
+      if (a.kind === 'line' && b.kind === 'line'){
+        var h = xLineLine(a.ax,a.ay,a.bx,a.by, b.ax,b.ay,b.bx,b.by);
+        if (h) out.push({x:h.x, y:h.y});
+      } else if (a.kind === 'line'){
+        xLineCircle(a.ax,a.ay,a.bx,a.by, b.cx,b.cy,b.R).forEach(function(q){ out.push({x:q.x, y:q.y}); });
+      } else if (b.kind === 'line'){
+        xLineCircle(b.ax,b.ay,b.bx,b.by, a.cx,a.cy,a.R).forEach(function(q){ out.push({x:q.x, y:q.y}); });
+      } else {
+        xCircleCircle(a.cx,a.cy,a.R, b.cx,b.cy,b.R).forEach(function(q){ out.push(q); });
+      }
+    });
+  });
+  return out;
+}
+function spanBulgeBetween(curve, P0, P1){
+  // bulge for travel P0->P1 along the given circle-curve (0 for lines)
+  if (curve.kind === 'line') return 0;
+  var aA = Math.atan2(P0.y-curve.cy, P0.x-curve.cx);
+  var aB = Math.atan2(P1.y-curve.cy, P1.x-curve.cx);
+  var sw = curve.ccw ? angNorm(aB-aA) : angNorm(aA-aB);
+  return Math.tan(sw/4) * (curve.ccw ? 1 : -1);
+}
 function filletPathVertex(pe, vi, r){
   var n = pe.pts.length;
   var iPrev = (vi-1+n) % n, iNext = (vi+1) % n;
   if (!pe.closed && (vi === 0 || vi === n-1)) return null;
-  if (Math.abs(pe.pts[iPrev][2]) > 1e-9 || Math.abs(pe.pts[vi][2]) > 1e-9) return null; // straight legs only
   var P = {x:pe.pts[vi][0], y:pe.pts[vi][1]};
-  var A = {x:pe.pts[iPrev][0], y:pe.pts[iPrev][1]};
-  var B = {x:pe.pts[iNext][0], y:pe.pts[iNext][1]};
-  var u1 = {x:A.x-P.x, y:A.y-P.y}, u2 = {x:B.x-P.x, y:B.y-P.y};
-  var l1 = Math.hypot(u1.x,u1.y), l2 = Math.hypot(u2.x,u2.y);
-  if (l1 < 1e-9 || l2 < 1e-9) return null;
-  u1.x/=l1; u1.y/=l1; u2.x/=l2; u2.y/=l2;
-  var cosT = u1.x*u2.x + u1.y*u2.y;
-  cosT = Math.max(-1, Math.min(1, cosT));
-  var theta = Math.acos(cosT);
-  if (theta < 0.02 || theta > Math.PI - 0.02) return null; // degenerate corner
-  var t = r / Math.tan(theta/2);
-  if (t > l1 - 1e-6 || t > l2 - 1e-6) return null; // legs too short
-  var T1 = {x:P.x + u1.x*t, y:P.y + u1.y*t};
-  var T2 = {x:P.x + u2.x*t, y:P.y + u2.y*t};
-  var cross = u1.x*u2.y - u1.y*u2.x;
-  var sweep = Math.PI - theta;
-  var bulge = Math.tan(sweep/4) * (cross > 0 ? -1 : 1); // turn direction sets arc side
-  var pts = pe.pts.slice();
-  pts.splice(vi, 1, [T1.x, T1.y, bulge], [T2.x, T2.y, 0]);
+  var cIn  = spanCurve(pe.pts[iPrev], pe.pts[vi], pe.pts[iPrev][2] || 0);
+  var cOut = spanCurve(pe.pts[vi], pe.pts[iNext], pe.pts[vi][2] || 0);
+  if (!cIn || !cOut) return null;
+  // best fillet center: valid tangency on BOTH spans, nearest the corner
+  var best = null;
+  filletCenters(cIn, cOut, r).forEach(function(O){
+    var T1 = tangencyOn(cIn, O), T2 = tangencyOn(cOut, O);
+    if (!T1 || !T2) return;
+    var d = Math.hypot(O.x-P.x, O.y-P.y);
+    if (!best || d < best.d) best = {O:O, T1:T1, T2:T2, d:d};
+  });
+  if (!best) return null;
+  // fillet arc T1 -> T2 around O: minor direction
+  var aT1 = Math.atan2(best.T1.y-best.O.y, best.T1.x-best.O.x);
+  var aT2 = Math.atan2(best.T2.y-best.O.y, best.T2.x-best.O.x);
+  var ccwF = angNorm(aT2-aT1) <= Math.PI;
+  var swF = ccwF ? angNorm(aT2-aT1) : angNorm(aT1-aT2);
+  var bulgeF = Math.tan(swF/4) * (ccwF ? 1 : -1);
+  // rebuild: incoming span shortens to T1 (its bulge recomputed if an arc),
+  // fillet span T1->T2, outgoing span T2->next (bulge recomputed if an arc)
+  var pts = pe.pts.map(function(pt){ return pt.slice(); });
+  pts[iPrev][2] = spanBulgeBetween(cIn, {x:pts[iPrev][0], y:pts[iPrev][1]}, best.T1);
+  var outBulge = spanBulgeBetween(cOut, best.T2, {x:pe.pts[iNext][0], y:pe.pts[iNext][1]});
+  pts.splice(vi, 1, [best.T1.x, best.T1.y, bulgeF], [best.T2.x, best.T2.y, outBulge]);
   return {t:'path', pts:pts, closed:pe.closed};
 }
 function doFillet(w, r){
   var tol = 10/VIEW.scale;
+  doFillet.lastMiss = null;
   // 1) vertex of poly / path / rect corner
   for (var i = 0; i < DOC.ents.length; i++){
     var e = DOC.ents[i];
@@ -1456,8 +1762,10 @@ function doFillet(w, r){
         var ne = filletPathVertex(pe, vi, r);
         if (ne){
           if (e.tp) ne.tp = true;
+          if (e.con) ne.con = true;
           pushUndo(); DOC.ents.splice(i, 1, ne); return true;
         }
+        doFillet.lastMiss = 'fit';
       }
     }
   }
@@ -2272,12 +2580,25 @@ function wire(){
   });
 
   var IMP = {ex: null};
-  function impClose(){ document.getElementById('impModal').hidden = true; IMP.ex = null; }
+  function impClose(){ document.getElementById('impModal').hidden = true; IMP.ex = null; IMP.dxf = null; IMP.mode = null; }
   document.getElementById('impCancel').addEventListener('click', impClose);
   document.getElementById('impModal').addEventListener('pointerdown', function(e){
     if (e.target === e.currentTarget) impClose();
   });
   document.getElementById('impGo').addEventListener('click', function(){
+    if (IMP.mode === 'dxf' && IMP.dxf){
+      var dxx = IMP.dxf;
+      var unitScale = document.getElementById('impIN').checked ? 25.4 : 1;
+      var bbn = dxfBBox(dxx.ents);
+      var nw = (bbn.x1-bbn.x0) * unitScale;
+      var wTarget = parseFloat(document.getElementById('impWidth').value);
+      var fitScale = (!isNaN(wTarget) && wTarget > 0 && nw > 1e-9) ? wTarget/nw : 1;
+      pushUndo();
+      DOC = dxfToDoc(dxx, unitScale*fitScale, document.getElementById('impOrigin').checked, DOC.stock);
+      syncStockUI(); persist(); fit();
+      impClose();
+      return;
+    }
     var ex = IMP.ex;
     if (!ex) return;
     var useD = document.getElementById('impDrawing').checked;
@@ -2308,7 +2629,10 @@ function wire(){
         try{
           var ex = crvExtract(buf);
           if (!ex || (!ex.contours.length && !ex.preview.length)){ alert('No vectors found in this .crv (or unsupported version).'); return; }
-          IMP.ex = ex;
+          IMP.mode = 'crv'; IMP.ex = ex;
+          document.getElementById('impTitle').textContent = 'Import VCarve file';
+          document.querySelectorAll('.impCrvRow').forEach(function(el){ el.hidden = false; });
+          document.querySelectorAll('.impDxfRow').forEach(function(el){ el.hidden = true; });
           document.getElementById('impStock').textContent =
             'Stock ' + ex.stockW.toFixed(1) + ' x ' + ex.stockH.toFixed(1) + ' (native units)';
           document.getElementById('impDrawingLbl').textContent = 'Drawing vectors (' + ex.contours.length + ')';
@@ -2324,11 +2648,35 @@ function wire(){
         }catch(err){ alert('.crv import failed: ' + err.message); }
         return;
       }
+      var txt2 = new TextDecoder().decode(buf);
+      if (/^\s*0\s*[\r\n]+\s*SECTION/m.test(txt2) || txt2.indexOf('ENTITIES') >= 0 && txt2.indexOf('$INSUNITS') >= 0 || /\n\s*0\s*\r?\nSECTION/.test(txt2)){
+        try{
+          var dx = dxfExtract(txt2);
+          if (!dx.ents.length){ alert('No importable vectors found in this DXF.'); return; }
+          IMP.mode = 'dxf'; IMP.dxf = dx;
+          var bbx = dxfBBox(dx.ents);
+          var skTxt = Object.keys(dx.skipped).length
+            ? ' \u00b7 skipped: ' + Object.keys(dx.skipped).map(function(k){ return dx.skipped[k]+'\u00d7'+k; }).join(', ')
+            : '';
+          document.getElementById('impTitle').textContent = 'Import DXF';
+          document.getElementById('impStock').textContent =
+            dx.ents.length + ' entities \u00b7 ' + (bbx.x1-bbx.x0).toFixed(1) + ' \u00d7 ' + (bbx.y1-bbx.y0).toFixed(1) +
+            ' (native units)' + skTxt;
+          document.querySelectorAll('.impCrvRow').forEach(function(el){ el.hidden = true; });
+          document.querySelectorAll('.impDxfRow').forEach(function(el){ el.hidden = false; });
+          document.getElementById('impWidth').value = '';
+          document.getElementById('impOrigin').checked = true;
+          document.getElementById('impIN').checked = dx.units === 1;
+          document.getElementById('impMM').checked = dx.units !== 1;
+          document.getElementById('impModal').hidden = false;
+        }catch(errD){ alert('DXF import failed: ' + errD.message); }
+        return;
+      }
       try{
-        var d = JSON.parse(new TextDecoder().decode(buf));
+        var d = JSON.parse(txt2);
         if (d && d.stock && d.ents){ pushUndo(); DOC = d; syncStockUI(); persist(); fit(); }
         else alert('Not a Kerf design file.');
-      }catch(err2){ alert('Not a Kerf design or .crv file.'); }
+      }catch(err2){ alert('Not a Kerf design, .crv, or .dxf file.'); }
     };
     rd.readAsArrayBuffer(f);
   }
