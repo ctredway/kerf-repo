@@ -133,7 +133,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.21.20'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.21.21'; // bump on every build — shown in the header
 /* ============================================================
    Kerf Design v0.1 — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2871,9 +2871,22 @@ function wire(){
       uiCfgSave();
     }
   });
+  var TOOL_HOTKEYS = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide', f:'fillet', t:'trim', e:'extend', d:'copy', m:'mirror', o:'rotate', s:'offset'};
   pin.addEventListener('keydown', function(e){
+    // A tool-hotkey letter typed while the field is focused switches tools (letters are never part
+    // of a numeric entry). This lets you go fillet -> type radius -> press T for trim without
+    // having to click away from the field first. Only when the field holds no partial number.
+    var k = e.key.toLowerCase();
+    // fillet arms its radius live, so its value is already committed — a hotkey may switch even with
+    // a number showing. Other tools may be mid coordinate entry, so only switch when no partial number.
+    var canSwitch = (TOOL === 'fillet') || !/[0-9.\-]/.test(pin.value);
+    if (TOOL_HOTKEYS[k] && e.key.length === 1 && !e.ctrlKey && !e.altKey && canSwitch){
+      pin.value = ''; pin.blur();
+      setTool(TOOL_HOTKEYS[k]);
+      e.preventDefault(); e.stopPropagation();
+      return;
+    }
     if (e.key === 'Enter'){
-      // fillet already armed live via 'input'; just tidy the field and keep the tool active
       if (TOOL === 'fillet'){ pin.value = ''; stagePrompt('fillet0'); e.stopPropagation(); return; }
       toolCommitText(pin.value); pin.value='';
     }
