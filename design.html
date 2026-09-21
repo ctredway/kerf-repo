@@ -179,7 +179,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.29.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.30.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -427,6 +427,10 @@ var STAGE_LABEL = {
   fillet0:'Fillet \u2014 radius R{R} \u00b7 click a corner (poly/rect corner, or two meeting lines) \u00b7 type a new radius anytime',
   trim0:  'Trim \u2014 click the piece to remove (lines, arcs, circles); crossings bound the cut',
   extend0:'Extend \u2014 click near the end of a line or arc to run it to the next crossing',
+  node0:  'Edit nodes \u2014 click a polyline or path to show its points',
+  node1:  'Edit nodes \u2014 drag a point to move it \u00b7 click a point to type exact X,Y \u00b7 click a segment to type its length \u00b7 Esc when done',
+  nodeXY: 'Point \u2014 type exact "x,y"',
+  nodeLen:'Segment \u2014 type its length (the later point moves along the segment direction)',
   editMiss:'Nothing there \u2014 click a corner (fillet) or a line/arc/circle (trim, extend)',
   filletFit:'Fillet didn\u2019t fit \u2014 radius too large for those legs (type a smaller radius), or the spans meet tangentially',
   filletBadR:'Radius must be a positive number \u2014 e.g. type 3 for a 3\u00a0mm fillet',
@@ -460,6 +464,7 @@ var TOOLS = {
   fillet:{kind:'edit',   prompt:'fillet0', hover:hoverFillet},
   trim:  {kind:'edit',   prompt:'trim0',   hover:hoverTrim},
   extend:{kind:'edit',   prompt:'extend0', hover:hoverExtend},
+  node:  {kind:'edit',   prompt:'node0',   hover:hoverNode},
   offset:{kind:'transform', prompt:'offset0', keepSel:true},
   copy:  {kind:'transform', prompt:'copy0',   keepSel:true},
   mirror:{kind:'transform', prompt:'mirror0', keepSel:true},
@@ -512,12 +517,38 @@ function hoverExtend(w){
   return {action:'none', hint:'extend needs a line or arc'};
 }
 var HOVER = null; // last computed hover status, for cursor feedback in draw()
+var NODE = null;  // {ent:index, drag:vertexIndex|null} while the node tool has a shape open
+function nodePtsOf(e){
+  // uniform [x,y,bulge] view of an editable entity, or null
+  if (!e) return null;
+  if (e.t === 'poly') return e.pts.map(function(q){ return [q[0], q[1], 0]; });
+  if (e.t === 'path') return e.pts.map(function(q){ return [q[0], q[1], q[2]||0]; });
+  return null;
+}
+function hoverNode(w){
+  if (NODE && DOC.ents[NODE.ent]){
+    var pts = nodePtsOf(DOC.ents[NODE.ent]);
+    if (pts){
+      var tolv = 8/VIEW.scale;
+      for (var i = 0; i < pts.length; i++)
+        if (Math.hypot(w.x-pts[i][0], w.y-pts[i][1]) < tolv)
+          return {action:'do', hint:'point ' + (i+1), at:{x:pts[i][0], y:pts[i][1]}};
+      return {action:'do', hint:'segment'};
+    }
+  }
+  var idx = pickEntity(w);
+  if (idx === null) return {action:'none'};
+  var e = DOC.ents[idx];
+  if (e.t === 'poly' || e.t === 'path') return {action:'do', hint:'edit points', idx:idx};
+  return {action:'none', hint:'node editing works on polylines and paths'};
+}
 var doGroupSelectionRef = function(){}, doUngroupSelectionRef = function(){};
 
 function toolMgrEnter(t){
   var desc = TOOLS[t] || TOOLS.select;
   // clean slate: no leftover in-progress geometry, no stolen focus, field cleared
   DRAW = null;
+  if (t !== 'node') NODE = null;
   var pinEl = document.getElementById('promptIn');
   if (pinEl){ pinEl.value = ''; pinEl.blur(); }
   hidePrompt();
@@ -634,6 +665,44 @@ function toolClick(w, snap){
   else if (TOOL === 'array'){
     if (!SEL.length){ stagePrompt('selFirst'); }
     else if (!DRAW){ DRAW = {stage:1, cx:p.x, cy:p.y}; stagePrompt('array1'); }
+  }
+  else if (TOOL === 'node'){
+    var tolv = 8/VIEW.scale;
+    if (NODE && DOC.ents[NODE.ent]){
+      var ne2 = DOC.ents[NODE.ent], pts2 = nodePtsOf(ne2);
+      if (pts2){
+        // clicked a vertex? -> exact X,Y entry
+        for (var vi2 = 0; vi2 < pts2.length; vi2++){
+          if (Math.hypot(w.x-pts2[vi2][0], w.y-pts2[vi2][1]) < tolv){
+            DRAW = {stage:'nodeXY', ent:NODE.ent, vi:vi2};
+            showPrompt(STAGE_LABEL.nodeXY, pts2[vi2][0].toFixed(2) + ',' + pts2[vi2][1].toFixed(2), true);
+            draw(); return;
+          }
+        }
+        // clicked a segment? -> exact length entry
+        var m2 = pts2.length, last2 = ne2.closed ? m2 : m2-1, bestSeg = null;
+        for (var sg = 0; sg < last2; sg++){
+          var a2 = pts2[sg], b2 = pts2[(sg+1)%m2];
+          var dd = distToSeg(w.x, w.y, a2[0], a2[1], b2[0], b2[1]);
+          if (dd < tolv*1.5 && (!bestSeg || dd < bestSeg.d)) bestSeg = {d:dd, i:sg};
+        }
+        if (bestSeg){
+          var aa = pts2[bestSeg.i], bb = pts2[(bestSeg.i+1)%m2];
+          DRAW = {stage:'nodeLen', ent:NODE.ent, seg:bestSeg.i};
+          showPrompt(STAGE_LABEL.nodeLen, Math.hypot(bb[0]-aa[0], bb[1]-aa[1]).toFixed(2), true);
+          draw(); return;
+        }
+      }
+      NODE = null; stagePrompt('node0'); draw(); return;   // clicked away: close it
+    }
+    var hitN = pickEntity(w);
+    if (hitN !== null && nodePtsOf(DOC.ents[hitN])){
+      NODE = {ent:hitN, drag:null};
+      SEL = [hitN];
+      stagePrompt('node1');
+    } else {
+      toast('info', 'Pick a polyline', 'Node editing works on polylines and paths. Click one to show its points.');
+    }
   }
   else if (TOOL === 'fillet'){
     if (doFillet(w, UICFG.filletR)){ persist(); stagePrompt('fillet0'); }
@@ -870,6 +939,42 @@ function toolCommitText(txt){
         DRAW = null; stagePrompt('array0'); persist(); draw();
       }
       return;
+    }
+    return;
+  }
+  if (DRAW && DRAW.stage === 'nodeXY'){
+    var pe2 = DOC.ents[DRAW.ent], pp = nodePtsOf(pe2);
+    if (!pp){ DRAW = null; hidePrompt(); return; }
+    var mxy = txt.split(',');
+    if (mxy.length === 2){
+      var nx2 = parseFloat(mxy[0]), ny2 = parseFloat(mxy[1]);
+      if (!isNaN(nx2) && !isNaN(ny2)){
+        pushUndo();
+        pe2.pts[DRAW.vi][0] = nx2; pe2.pts[DRAW.vi][1] = ny2;
+        pe2._tess = null; pe2._tess2 = null;
+        DRAW = null; stagePrompt('node1'); persist(); draw();
+        toast('ok', 'Point moved', 'Set to ' + nx2.toFixed(2) + ', ' + ny2.toFixed(2) + '.');
+      }
+    }
+    return;
+  }
+  if (DRAW && DRAW.stage === 'nodeLen'){
+    var pe3 = DOC.ents[DRAW.ent], pp3 = nodePtsOf(pe3);
+    if (!pp3){ DRAW = null; hidePrompt(); return; }
+    var wantL = parseFloat(txt);
+    if (!isNaN(wantL) && wantL > 0){
+      var m3 = pp3.length, ia = DRAW.seg, ib = (DRAW.seg+1) % m3;
+      var ax3 = pp3[ia][0], ay3 = pp3[ia][1], bx3 = pp3[ib][0], by3 = pp3[ib][1];
+      var curL = Math.hypot(bx3-ax3, by3-ay3);
+      if (curL > 1e-9){
+        pushUndo();
+        var ux3 = (bx3-ax3)/curL, uy3 = (by3-ay3)/curL;
+        pe3.pts[ib][0] = ax3 + ux3*wantL;
+        pe3.pts[ib][1] = ay3 + uy3*wantL;
+        pe3._tess = null; pe3._tess2 = null;
+        DRAW = null; stagePrompt('node1'); persist(); draw();
+        toast('ok', 'Segment resized', 'Set to ' + wantL.toFixed(2) + ' mm.');
+      }
     }
     return;
   }
@@ -1589,6 +1694,37 @@ function draw(){
   }
 
   // snap marker
+  // node editing: draw vertex handles and label every segment of the open shape
+  if (TOOL === 'node' && NODE && DOC.ents[NODE.ent]){
+    var ne3 = DOC.ents[NODE.ent], np = nodePtsOf(ne3);
+    if (np){
+      ctx.save();
+      // segment labels
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      var mN = np.length, lastN = ne3.closed ? mN : mN-1;
+      for (var sN = 0; sN < lastN; sN++){
+        var aN = np[sN], bN = np[(sN+1)%mN];
+        var LN = Math.hypot(bN[0]-aN[0], bN[1]-aN[1]);
+        if (LN < 1e-6) continue;
+        var midN = w2s((aN[0]+bN[0])/2, (aN[1]+bN[1])/2);
+        var nxN = -(bN[1]-aN[1])/LN, nyN = (bN[0]-aN[0])/LN;
+        ctx.fillStyle = '#e8a33d';
+        ctx.fillText(LN.toFixed(2), midN.x + nxN*12, midN.y - nyN*12);
+      }
+      // vertex handles
+      for (var vN = 0; vN < np.length; vN++){
+        var hp = w2s(np[vN][0], np[vN][1]);
+        var isDrag = NODE.drag === vN;
+        ctx.fillStyle = isDrag ? '#ffc96b' : '#14181d';
+        ctx.strokeStyle = isDrag ? '#ffc96b' : '#7fb069';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.rect(hp.x-4, hp.y-4, 8, 8); ctx.fill(); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   // polyline being drawn: label each committed segment with its length
   if (TOOL === 'poly' && DRAW && DRAW.pts && DRAW.pts.length > 1){
     ctx.save();
@@ -3023,6 +3159,7 @@ var ICON = {
  array:'<svg viewBox="0 0 18 18"><circle cx="4.5" cy="4.5" r="1.7"/><circle cx="11" cy="4.5" r="1.7"/><circle cx="4.5" cy="11" r="1.7"/><circle cx="11" cy="11" r="1.7" opacity=".45"/></svg>',
  offs:'<svg viewBox="0 0 18 18"><rect x="6" y="6" width="6" height="6"/><rect x="2.5" y="2.5" width="13" height="13" opacity=".5" stroke-dasharray="2.4 2"/></svg>',
  join:'<svg viewBox="0 0 18 18"><path d="M3 14 L8 9"/><path d="M10 7 L15 3"/><circle cx="9" cy="8" r="2.2" opacity=".6"/></svg>',
+ node:'<svg viewBox="0 0 18 18"><path d="M3 14 L8 6 L12 10 L15.5 4"/><rect x="1.4" y="12.4" width="3.2" height="3.2"/><rect x="6.4" y="4.4" width="3.2" height="3.2"/><rect x="10.4" y="8.4" width="3.2" height="3.2"/><rect x="13.9" y="2.4" width="3.2" height="3.2"/></svg>',
  group:'<svg viewBox="0 0 18 18"><rect x="2.5" y="2.5" width="6" height="6"/><rect x="9.5" y="9.5" width="6" height="6"/><rect x="1" y="1" width="16" height="16" stroke-dasharray="2.5 2" opacity=".55"/></svg>',
  ungroup:'<svg viewBox="0 0 18 18"><rect x="2" y="2" width="6" height="6"/><rect x="10" y="10" width="6" height="6"/><path d="M9.5 4 L15.5 4 M12.5 1.5 L12.5 6.5" opacity=".55"/></svg>',
  expl:'<svg viewBox="0 0 18 18"><path d="M4 12 L8 8"/><path d="M11 6 L14.5 3.5"/><path d="M12 12.5 L15 14.5"/><path d="M4.5 4 L6.5 6" opacity=".7"/></svg>',
@@ -3046,6 +3183,7 @@ var PANEL_BTNS = {
  arc:   {tool:'arc', icon:'arc', title:'Arc (A) \u2014 start point, end point, then bow it with the mouse (3-point) or type a radius; + bows left of start\u2192end, \u2212 right'},
  poly:  {tool:'poly', icon:'poly', title:'Polyline (P) \u2014 click points, Enter ends, click start to close'},
  offsetT:{tool:'offset', icon:'offs', title:'Offset (S) \u2014 select or click shapes, then type the distance: + outward, \u2212 inward (open shapes: + is left of travel)'},
+ nodeT:{tool:'node', icon:'node', title:'Edit nodes (N) \u2014 click a polyline to show its points; drag a point to move it, click a point or segment to type exact values'},
  groupBtn:{id:'groupBtn', icon:'group', title:'Group (G) \u2014 bundle the selected vectors into one object. All geometry is kept; it just selects and moves as one piece.'},
  ungroupBtn:{id:'ungroupBtn', icon:'ungroup', title:'Ungroup (U) \u2014 break a group back into its separate vectors'},
  joinBtn:{id:'joinBtn', icon:'join', title:'Join \u2014 stitch selected OPEN vectors whose ends meet into one continuous contour'},
@@ -3069,7 +3207,7 @@ var PANEL_BTNS = {
 var PANEL_GROUPS = [
  {id:'file',   label:'File',           btns:['newBtn','saveBtn','loadBtn']},
  {id:'create', label:'Create Vectors', btns:['select','line','rect','circle','arc','poly']},
- {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','copyT','mirrorT','rotateT','arrayT','groupBtn','ungroupBtn','joinBtn','explodeBtn']},
+ {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','nodeT','copyT','mirrorT','rotateT','arrayT','groupBtn','ungroupBtn','joinBtn','explodeBtn']},
  {id:'guides', label:'Guides',         btns:['guide','clearGuides']},
  {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']}
  /* D1.2 adds: {id:'edit', label:'Edit Vectors', btns:['fillet','trim','extend','offset',...]} */
@@ -3434,6 +3572,19 @@ function wire(){
     if (e.button === 1 || e.button === 2){ pan = {x:e.clientX, y:e.clientY}; return; }
     var r = cv.getBoundingClientRect();
     var w = s2w(e.clientX - r.left, e.clientY - r.top);
+    // node tool: grab a vertex handle to drag it
+    if (TOOL === 'node' && NODE && DOC.ents[NODE.ent]){
+      var dpts = nodePtsOf(DOC.ents[NODE.ent]);
+      if (dpts){
+        var dtol = 8/VIEW.scale;
+        for (var di = 0; di < dpts.length; di++){
+          if (Math.hypot(w.x-dpts[di][0], w.y-dpts[di][1]) < dtol){
+            NODE.drag = di; NODE.pushed = false;
+            draw(); return;              // don't fall through to the click handler
+          }
+        }
+      }
+    }
     toolClick(w, MOUSE.snap || resolveSnap(w));
   });
   cv.addEventListener('pointermove', function(e){
@@ -3451,6 +3602,18 @@ function wire(){
     if (TOOL==='select' && DRAW && DRAW.stage==='marq' && (e.buttons & 1)){
       DRAW.ex = w.x; DRAW.ey = w.y;
     }
+    // node tool: dragging a vertex
+    if (TOOL === 'node' && NODE && NODE.drag !== null && NODE.drag !== undefined && (e.buttons & 1)){
+      var ndEnt = DOC.ents[NODE.ent];
+      if (ndEnt && ndEnt.pts && ndEnt.pts[NODE.drag]){
+        if (!NODE.pushed){ pushUndo(); NODE.pushed = true; }
+        ndEnt.pts[NODE.drag][0] = MOUSE.snap.x;
+        ndEnt.pts[NODE.drag][1] = MOUSE.snap.y;
+        ndEnt._tess = null; ndEnt._tess2 = null;
+        persist(); draw();
+      }
+      return;
+    }
     // dragging selection
     if (TOOL==='select' && DRAW && DRAW.stage==='drag' && SEL.length && (e.buttons & 1)){
       var dx = MOUSE.snap.x - DRAW.lx, dy = MOUSE.snap.y - DRAW.ly;
@@ -3465,6 +3628,9 @@ function wire(){
   });
   cv.addEventListener('pointerup', function(){
     pan = null;
+    if (TOOL === 'node' && NODE && NODE.drag !== null && NODE.drag !== undefined){
+      NODE.drag = null; NODE.pushed = false; draw();
+    }
     if (TOOL==='select' && DRAW && DRAW.stage==='drag') DRAW = null;
     else if (TOOL==='select' && DRAW && DRAW.stage==='marq'){
       var m = DRAW; DRAW = null;
@@ -3580,7 +3746,7 @@ function wire(){
       } else if (de.t === 'rect'){
         showPrompt('Rect \u2014 type new "W,H"; min corner stays anchored', de.w.toFixed(2) + ',' + de.h.toFixed(2), true);
       } else {
-        showPrompt('Polyline \u2014 per-vertex editing comes next; Esc to close', '', false);
+        showPrompt('Polyline \u2014 press N for node editing to move or dimension individual points', '', false);
       }
       return;
     }
@@ -3616,7 +3782,7 @@ function wire(){
         });
         persist(); draw(); return;
       }
-      var hot = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide', f:'fillet', t:'trim', e:'extend', d:'copy', m:'mirror', o:'rotate', s:'offset'};
+      var hot = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide', f:'fillet', t:'trim', e:'extend', d:'copy', m:'mirror', o:'rotate', s:'offset', n:'node'};
       if (hot[e.key.toLowerCase()] && !e.ctrlKey){ setTool(hot[e.key.toLowerCase()]); return; }
       if (e.key.toLowerCase() === 'f'){ fit(); return; }
     }
