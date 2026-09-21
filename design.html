@@ -34,7 +34,24 @@
   #openControl{color:var(--amber);text-decoration:none;font-size:13px;font-weight:600;padding:5px 10px;border:1px solid var(--line);border-radius:5px;margin-right:8px}
   #openControl:hover{border-color:var(--amber);background:rgba(232,163,61,0.08)}
   #settingsBtn{font-size:13px}
-  #toastWrap{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:300;max-width:380px}
+  #toastWrap{position:fixed;right:16px;bottom:48px;display:flex;flex-direction:column;gap:8px;z-index:300;max-width:380px}
+  .toast.fade{opacity:0;transform:translateY(6px);transition:opacity .45s ease, transform .45s ease}
+  #msgBulb{display:inline-flex;align-items:center;gap:5px;background:none;border:1px solid transparent;border-radius:5px;padding:2px 7px;color:#e06c5a;font:inherit;cursor:pointer}
+  #msgBulb[hidden]{display:none}
+  #msgBulb:hover,#msgBulb[aria-expanded=true]{border-color:rgba(224,108,90,.5);background:rgba(224,108,90,.08)}
+  #msgBulb svg{width:15px;height:15px;fill:rgba(224,108,90,.25);stroke:#e06c5a;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+  #msgPanel{position:fixed;right:16px;bottom:44px;width:380px;max-height:60vh;overflow-y:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:310}
+  #msgPanel[hidden]{display:none}
+  #msgPanel .mhead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px}
+  #msgPanel .mhead .grow{flex:1}
+  .mItem{padding:9px 12px 9px 10px;border-left:4px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;line-height:1.45}
+  .mItem:last-child{border-bottom:0}
+  .mItem.ok{border-left-color:#7fb069} .mItem.info{border-left-color:var(--amber)}
+  .mItem.warn{border-left-color:#d98e3f} .mItem.err{border-left-color:#e06c5a}
+  .mItem b{display:block;margin-bottom:2px;color:var(--ink)}
+  .mItem .mDetail{color:var(--ink);opacity:.85}
+  .mItem .mTime{display:block;margin-top:3px;font-size:11.5px;color:var(--muted)}
+  @media (prefers-reduced-motion: reduce){ .toast{animation:none} .toast.fade{transition:none} }
   .toast{display:flex;align-items:flex-start;gap:10px;background:var(--panel);border:1px solid var(--line);border-left-width:4px;border-radius:6px;padding:11px 12px;box-shadow:0 6px 24px rgba(0,0,0,.45);font-size:13px;line-height:1.45;animation:toastIn .16s ease-out}
   .toast.ok{border-left-color:#7fb069}
   .toast.info{border-left-color:var(--amber)}
@@ -122,6 +139,10 @@
   </header>
 
   <div id="toastWrap"></div>
+  <div id="msgPanel" hidden role="dialog" aria-label="Recent messages">
+    <div class="mhead"><b>Recent messages</b><span class="grow"></span><button id="msgClear">Clear</button></div>
+    <div id="msgList"></div>
+  </div>
 
   <div id="textModal" hidden>
     <div id="textPanel" role="dialog" aria-labelledby="textTitle">
@@ -216,13 +237,17 @@
     <span id="fdim"></span>
     <span class="spacer" style="flex:1"></span>
     <span id="hint">Type numbers while drawing: "50,30" absolute · "@10,0" relative · "D5" circle diameter · click an edge with Guide then type the offset</span>
+    <button id="msgBulb" hidden aria-expanded="false" aria-controls="msgPanel" title="Recent messages">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.6 11.2 C5.6 9.6 3.5 8.6 3.5 6 A4.5 4.5 0 0 1 12.5 6 C12.5 8.6 10.4 9.6 10.4 11.2 Z"/><path d="M6 13 H10 M6.6 14.8 H9.4"/></svg>
+      <span id="msgCount">0</span>
+    </button>
   </footer>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.37.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.38.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2117,7 +2142,56 @@ function toast(kind, title, detail){
   wrap.appendChild(el);
   // cap the stack so a repeated failure can't fill the screen
   while (wrap.children.length > 6) wrap.removeChild(wrap.firstChild);
+  // fade out after 10 s; hovering holds it, and it fades 3 s after the pointer leaves
+  var timer = null;
+  function fade(){ el.classList.add('fade'); setTimeout(function(){ el.remove(); }, 460); }
+  function arm(ms){ clearTimeout(timer); timer = setTimeout(fade, ms); }
+  el.addEventListener('mouseenter', function(){ clearTimeout(timer); el.classList.remove('fade'); });
+  el.addEventListener('mouseleave', function(){ arm(3000); });
+  arm(10000);
+  // keep the last 5 in the status-bar history
+  MSG_LOG.unshift({kind:kind || 'info', title:title, detail:detail || '', at:Date.now()});
+  if (MSG_LOG.length > 5) MSG_LOG.length = 5;
+  refreshMsgBulb();
   return el;
+}
+var MSG_LOG = [];
+function msgAgo(t){
+  var sec = Math.round((Date.now() - t) / 1000);
+  if (sec < 60) return 'just now';
+  if (sec < 3600) return Math.round(sec / 60) + ' min ago';
+  var d = new Date(t);
+  return d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function renderMsgList(){
+  var list = document.getElementById('msgList');
+  if (!list) return;
+  list.innerHTML = '';
+  MSG_LOG.forEach(function(m){
+    var it = document.createElement('div');
+    it.className = 'mItem ' + m.kind;
+    var b = document.createElement('b'); b.textContent = m.title; it.appendChild(b);
+    if (m.detail){ var d = document.createElement('span'); d.className = 'mDetail'; d.textContent = m.detail; it.appendChild(d); }
+    var tm = document.createElement('span'); tm.className = 'mTime'; tm.textContent = msgAgo(m.at); it.appendChild(tm);
+    list.appendChild(it);
+  });
+}
+function refreshMsgBulb(){
+  var bulb = document.getElementById('msgBulb');
+  if (!bulb) return;
+  bulb.hidden = !MSG_LOG.length;
+  document.getElementById('msgCount').textContent = MSG_LOG.length;
+  bulb.title = MSG_LOG.length ? 'Recent messages (' + MSG_LOG.length + ')' : 'Recent messages';
+  var panel = document.getElementById('msgPanel');
+  if (!MSG_LOG.length) setMsgPanel(false);
+  else if (panel && !panel.hidden) renderMsgList();
+}
+function setMsgPanel(open){
+  var panel = document.getElementById('msgPanel'), bulb = document.getElementById('msgBulb');
+  if (!panel) return;
+  if (open) renderMsgList();
+  panel.hidden = !open;
+  if (bulb) bulb.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
 /* ---------------- persistence ---------------- */
@@ -4512,6 +4586,20 @@ function wire(){
   function closeSettings(){ settingsModal.hidden = true; }
   document.getElementById('settingsBtn').addEventListener('click', openSettings);
 
+  // ---- message history (bulb in the status bar) ----
+  document.getElementById('msgBulb').addEventListener('click', function(){
+    setMsgPanel(document.getElementById('msgPanel').hidden);
+  });
+  document.getElementById('msgClear').addEventListener('click', function(){
+    MSG_LOG = []; refreshMsgBulb();
+  });
+  window.addEventListener('pointerdown', function(ev){           // click anywhere else closes it
+    var panel = document.getElementById('msgPanel'), bulb = document.getElementById('msgBulb');
+    if (panel.hidden) return;
+    if (panel.contains(ev.target) || bulb.contains(ev.target)) return;
+    setMsgPanel(false);
+  }, true);
+
   // ---- text dialog: every change previews live on the canvas ----
   function txtLive(){
     if (!TXT) return;
@@ -4888,6 +4976,7 @@ function wire(){
   // global keys: type-to-enter numbers, tool hotkeys, editing
   window.addEventListener('keydown', function(e){
     if (!document.getElementById('textModal').hidden) return;   // the text dialog owns the keyboard
+    if (e.key === 'Escape' && !document.getElementById('msgPanel').hidden){ setMsgPanel(false); return; }
     var inField = e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA';
     // Ctrl-combos are global: they work from anywhere, including while an input has focus,
     // and regardless of whether a tool is mid-operation.
