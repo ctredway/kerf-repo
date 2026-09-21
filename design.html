@@ -165,7 +165,14 @@
   .tpCut{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
   #tpPanel .tpNote button{font-size:11.5px;padding:2px 8px;margin-top:6px}
   #tpPanel{grid-row:2;grid-column:3;width:292px;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line)}
-  #tpPanel[hidden]{display:none}
+  #tpPanel.collapsed{width:30px;overflow:hidden}
+  #tpPanel.collapsed #tpBody{display:none}
+  #tpStrip{display:none}
+  #tpPanel.collapsed #tpStrip{display:flex;align-items:center;justify-content:flex-start;gap:6px;width:100%;height:100%;padding:12px 0;border:0;border-radius:0;background:none;color:var(--muted);writing-mode:vertical-rl;font-size:12.5px;letter-spacing:.4px;cursor:pointer}
+  #tpPanel.collapsed #tpStrip:hover{color:var(--ink);background:rgba(255,255,255,.03)}
+  #tpStrip .chev{writing-mode:horizontal-tb;font-size:13px}
+  #tpCollapse{padding:2px 8px;font-size:13px}
+  #tpEmpty{margin:14px 12px}
   #tpPanel .tpHead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
   #tpPanel .tpHead b{font-size:13.5px} #tpPanel .tpHead span{flex:1;font-size:12px;color:var(--muted)}
   #tpPanel .tpNote{font-size:11.5px;color:var(--muted);line-height:1.45;margin:8px 12px}
@@ -175,9 +182,7 @@
   .tpTool{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.4}
   .tpSet{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:7px 0 0;font-size:12px}
   .tpSet dt{color:var(--muted)} .tpSet dd{margin:0;color:var(--ink);font-family:var(--mono);font-size:11.5px}
-  #tpToggle{font-size:12.5px}
-  #tpToggle[hidden]{display:none}
-  #tpToggle[aria-expanded=true]{border-color:var(--amber)}
+
   #cv{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
 
   #promptBar{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;display:none;align-items:center;gap:8px;background:rgba(23,28,34,.95);border:1px solid var(--amber);border-radius:6px;padding:8px 12px;z-index:5}
@@ -207,7 +212,6 @@
     <div class="spacer"></div>
     <a id="openControl" href="index.html" target="_blank" rel="noopener" title="Open 454 Control (the machine sender) in a new tab">454 Control ↗</a>
     <button id="libBtn" title="Tool library: your bits, tool numbers, and feeds and speeds">Tool library</button>
-    <button id="tpToggle" hidden aria-expanded="false" aria-controls="tpPanel" title="Show or hide the toolpaths found in the VCarve project">VCarve toolpaths</button>
     <button id="settingsBtn" title="Settings — stock size, display colors">⚙ Settings</button>
     <input type="file" id="loadFile" accept=".json,.crv,.dxf" hidden>
   </header>
@@ -321,11 +325,15 @@
   </div>
   <input type="file" id="libFile" accept=".vtdb" hidden>
 
-  <aside id="tpPanel" hidden aria-label="VCarve toolpaths">
-    <div class="tpHead"><b>VCarve toolpaths</b><span id="tpCount"></span><button id="tpClose" title="Hide this panel">✕</button></div>
-    <p class="tpNote">Read from the VCarve project, in the order VCarve lists them. They show how the job was set up; 454 Design can&rsquo;t cut them yet, and editing the drawing doesn&rsquo;t update them.</p>
+  <aside id="tpPanel" aria-label="Toolpaths">
+    <button id="tpStrip" aria-expanded="false" aria-controls="tpBody" title="Expand the toolpaths panel"><span class="chev">«</span><span>Toolpaths</span><span id="tpStripCount"></span></button>
+    <div id="tpBody">
+    <div class="tpHead"><b>Toolpaths</b><span id="tpCount"></span><button id="tpCollapse" aria-expanded="true" aria-controls="tpBody" title="Collapse this panel">»</button></div>
+    <p class="tpNote" id="tpEmpty">No toolpaths yet. Open a VCarve project (.crv) that has toolpaths, and they&rsquo;ll be listed here.</p>
+    <p class="tpNote" id="tpSrcNote">Read from the VCarve project, in the order VCarve lists them. They show how the job was set up; 454 Design can&rsquo;t cut them yet, and editing the drawing doesn&rsquo;t update them.</p>
     <p class="tpNote" id="tpLibNote"></p>
     <div id="tpList"></div>
+    </div>
   </aside>
 
   <div id="canvasWrap">
@@ -380,7 +388,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.43.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.43.1'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2078,15 +2086,21 @@ function vcToolpathsFrom(bytes){
 }
 
 function renderToolpathPanel(){
-  var list = DOC.vcToolpaths || [], pan = document.getElementById('tpPanel'), btn = document.getElementById('tpToggle');
+  var list = DOC.vcToolpaths || [], pan = document.getElementById('tpPanel');
   if (!pan) return;
-  btn.hidden = !list.length;
-  btn.textContent = 'VCarve toolpaths (' + list.length + ')';
-  btn.setAttribute('aria-expanded', list.length && UICFG.tpPanel ? 'true' : 'false');
-  var show = !!(list.length && UICFG.tpPanel);
-  if (pan.hidden === show) pan.hidden = !show;          // the canvas's size observer redraws it to fit
-  if (!show) return;
-  document.getElementById('tpCount').textContent = list.length + (list.length === 1 ? ' toolpath' : ' toolpaths');
+  var open = UICFG.tpPanel !== false;                    // always present; open unless collapsed
+  pan.classList.toggle('collapsed', !open);              // the canvas's size observer redraws it to fit
+  document.getElementById('tpStrip').setAttribute('aria-expanded', open ? 'true' : 'false');
+  document.getElementById('tpCollapse').setAttribute('aria-expanded', open ? 'true' : 'false');
+  document.getElementById('tpStripCount').textContent = list.length ? '(' + list.length + ')' : '';
+  document.getElementById('tpCount').textContent = list.length ? list.length + (list.length === 1 ? ' toolpath' : ' toolpaths') : '';
+  document.getElementById('tpEmpty').hidden = !!list.length;
+  document.getElementById('tpSrcNote').hidden = !list.length;
+  if (!list.length){
+    document.getElementById('tpLibNote').innerHTML = '';
+    document.getElementById('tpList').innerHTML = '';
+    return;
+  }
   var ln = document.getElementById('tpLibNote');
   ln.innerHTML = '';
   if (!TOOLLIB){
@@ -5806,8 +5820,8 @@ function wire(){
   });
   document.getElementById('libModal').addEventListener('pointerdown', function(e){ if (e.target.id === 'libModal') libCloseDlg(); });
   libLoad().then(function(lib){ if (lib && lib.tools){ TOOLLIB = lib; renderToolpathPanel(); } });
-  document.getElementById('tpToggle').addEventListener('click', function(){ UICFG.tpPanel = !UICFG.tpPanel; uiCfgSave(); renderToolpathPanel(); });
-  document.getElementById('tpClose').addEventListener('click', function(){ UICFG.tpPanel = false; uiCfgSave(); renderToolpathPanel(); });
+  document.getElementById('tpCollapse').addEventListener('click', function(){ UICFG.tpPanel = false; uiCfgSave(); renderToolpathPanel(); });
+  document.getElementById('tpStrip').addEventListener('click', function(){ UICFG.tpPanel = true; uiCfgSave(); renderToolpathPanel(); });
   renderToolpathPanel();
   // ---- nesting dialog ----
   document.getElementById('nestCancel').addEventListener('click', closeNestDialog);
@@ -5950,7 +5964,6 @@ function wire(){
     DOC = {stock: docD.stock, ents: docD.ents.concat(docP.ents), guides: [], dims: [], vcToolpaths: ex.toolpaths || []};
     syncStockUI(); persist(); fit();
     impClose();
-    if (DOC.vcToolpaths.length){ UICFG.tpPanel = true; uiCfgSave(); }
     renderToolpathPanel();
   });
   window.addEventListener('keydown', function(e){
