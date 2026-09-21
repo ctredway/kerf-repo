@@ -34,6 +34,17 @@
   #openControl{color:var(--amber);text-decoration:none;font-size:13px;font-weight:600;padding:5px 10px;border:1px solid var(--line);border-radius:5px;margin-right:8px}
   #openControl:hover{border-color:var(--amber);background:rgba(232,163,61,0.08)}
   #settingsBtn{font-size:13px}
+  #toastWrap{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:300;max-width:380px}
+  .toast{display:flex;align-items:flex-start;gap:10px;background:var(--panel);border:1px solid var(--line);border-left-width:4px;border-radius:6px;padding:11px 12px;box-shadow:0 6px 24px rgba(0,0,0,.45);font-size:13px;line-height:1.45;animation:toastIn .16s ease-out}
+  .toast.ok{border-left-color:#7fb069}
+  .toast.info{border-left-color:var(--amber)}
+  .toast.warn{border-left-color:#d98e3f}
+  .toast.err{border-left-color:#e06c5a}
+  .toast .tmsg{flex:1;color:var(--ink)}
+  .toast .tmsg b{display:block;margin-bottom:2px}
+  .toast .tx{background:none;border:0;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:0 2px}
+  .toast .tx:hover{color:var(--ink)}
+  @keyframes toastIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
   #settingsModal{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:200}
   #settingsModal[hidden]{display:none}
   #settingsPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px 24px;min-width:340px;box-shadow:0 10px 40px rgba(0,0,0,0.5)}
@@ -95,6 +106,8 @@
     <button id="settingsBtn" title="Settings — stock size, display colors">⚙ Settings</button>
     <input type="file" id="loadFile" accept=".json,.crv,.dxf" hidden>
   </header>
+
+  <div id="toastWrap"></div>
 
   <div id="settingsModal" hidden>
     <div id="settingsPanel">
@@ -166,7 +179,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.24.1'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.26.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -606,15 +619,27 @@ function toolClick(w, snap){
   }
   else if (TOOL === 'fillet'){
     if (doFillet(w, UICFG.filletR)){ persist(); stagePrompt('fillet0'); }
-    else stagePrompt(doFillet.lastMiss === 'fit' ? 'filletFit' : (doFillet.lastMiss === 'badr' ? 'filletBadR' : 'editMiss'));
+    else if (doFillet.lastMiss === 'fit'){
+      stagePrompt('filletFit');
+      toast('warn', 'Fillet didn\u2019t fit', 'Radius ' + UICFG.filletR + ' mm is too large for that corner, or the two sides meet smoothly (no corner to round). Try a smaller radius.');
+    } else if (doFillet.lastMiss === 'badr'){
+      stagePrompt('filletBadR');
+      toast('err', 'Invalid radius', 'Enter a positive number for the fillet radius.');
+    } else stagePrompt('editMiss');
   }
   else if (TOOL === 'trim'){
     if (doTrim(w)){ persist(); stagePrompt('trim0'); }
-    else stagePrompt('editMiss');
+    else {
+      stagePrompt('editMiss');
+      toast('warn', 'Nothing to trim there', 'Trim cuts where another shape crosses this one. Nothing crosses at that spot, so there is no piece to remove.');
+    }
   }
   else if (TOOL === 'extend'){
     if (doExtend(w)){ persist(); stagePrompt('extend0'); }
-    else stagePrompt('editMiss');
+    else {
+      stagePrompt('editMiss');
+      toast('warn', 'Nothing to extend to', 'Extend runs a line or arc out to the next shape it would meet. Nothing lies ahead of that end.');
+    }
   }
   else if (TOOL === 'guide'){
     var e = pickEdge(w);
@@ -742,7 +767,12 @@ function toolCommitText(txt){
           DOC.ents.push(ne);
         }
       });
-      if (made.length){ SEL = made; persist(); }   // chain: offset again offsets the new ring
+      if (made.length){
+        SEL = made; persist();                     // chain: offset again offsets the new ring
+        toast('ok', 'Offset created', made.length + ' offset shape(s) at ' + od + ' mm.');
+      } else {
+        toast('warn', 'Could not offset', 'The distance may be too large for the shape (an inward offset can collapse it). Try a smaller value.');
+      }
       stagePrompt('offset0'); draw();
     }
     return;
@@ -1288,6 +1318,37 @@ function dxfToDoc(ex, scale, toOrigin, keepStock){
   return {stock: keepStock, ents: ents, guides: []};
 }
 
+/* ---------------- toast notifications ----------------
+   Status and error messages. Dismissed only by the user (no auto-hide) so a
+   failure can't scroll past unnoticed. */
+function toast(kind, title, detail){
+  var wrap = document.getElementById('toastWrap');
+  if (!wrap) return;
+  var el = document.createElement('div');
+  el.className = 'toast ' + (kind || 'info');
+  var msg = document.createElement('div');
+  msg.className = 'tmsg';
+  var b = document.createElement('b');
+  b.textContent = title;
+  msg.appendChild(b);
+  if (detail){
+    var d = document.createElement('span');
+    d.textContent = detail;
+    msg.appendChild(d);
+  }
+  var x = document.createElement('button');
+  x.className = 'tx';
+  x.title = 'Dismiss';
+  x.textContent = '\u00d7';
+  x.addEventListener('click', function(){ el.remove(); });
+  el.appendChild(msg);
+  el.appendChild(x);
+  wrap.appendChild(el);
+  // cap the stack so a repeated failure can't fill the screen
+  while (wrap.children.length > 6) wrap.removeChild(wrap.firstChild);
+  return el;
+}
+
 /* ---------------- persistence ---------------- */
 function persist(){
   try{ localStorage.setItem('d454Design', JSON.stringify(DOC)); }catch(e){}
@@ -1493,6 +1554,17 @@ function draw(){
   }
 
   // snap marker
+  // polyline: show a box over the first point when hovering close enough to close the loop
+  if (TOOL === 'poly' && DRAW && DRAW.pts && DRAW.pts.length > 2 && MOUSE.snap){
+    var f0 = DRAW.pts[0];
+    if (Math.hypot(MOUSE.snap.x-f0[0], MOUSE.snap.y-f0[1]) < 6/VIEW.scale){
+      var fs = w2s(f0[0], f0[1]);
+      ctx.save();
+      ctx.strokeStyle = '#7fb069'; ctx.lineWidth = 2;
+      ctx.strokeRect(fs.x-6, fs.y-6, 12, 12);
+      ctx.restore();
+    }
+  }
   if (MOUSE.snap && MOUSE.snap.k !== 'grid'){
     var sm = w2s(MOUSE.snap.x, MOUSE.snap.y);
     ctx.strokeStyle = MOUSE.snap.k==='guideX' ? '#7fb069' : '#e8a33d';
@@ -2373,15 +2445,138 @@ function revFrag(f){
   }
   return out;
 }
+// Merge closed shapes with the open pieces that bridge them into ONE closed outline.
+// The open pieces' endpoints mark where each closed shape should be cut: we open every
+// closed shape at the perimeter span between its two junction points, discard the span
+// that faces the other shapes (the inner wall), and chain everything that remains.
+function mergeWithBridges(idxs){
+  var tol = 0.25;
+  var closed = [], open = [];
+  idxs.forEach(function(i){
+    var e = DOC.ents[i];
+    if (e.t === 'circle') return;                       // full circles have no junctions here
+    var isClosed = !!e.closed || e.t === 'rect';
+    var pts = null;
+    if (e.t === 'poly') pts = e.pts.map(function(q){ return [q[0], q[1], 0]; });
+    else if (e.t === 'path') pts = e.pts.map(function(q){ return [q[0], q[1], q[2]||0]; });
+    else if (e.t === 'line') pts = [[e.x1,e.y1,0],[e.x2,e.y2,0]];
+    else if (e.t === 'arc'){ var fa = fragOf(e); if (fa) pts = fa; }
+    else if (e.t === 'rect') pts = [[e.x,e.y,0],[e.x+e.w,e.y,0],[e.x+e.w,e.y+e.h,0],[e.x,e.y+e.h,0]];
+    if (!pts || pts.length < 2) return;
+    (isClosed ? closed : open).push({i:i, pts:pts});
+  });
+  if (!closed.length || !open.length) return null;
+
+  function near(a, b){ return Math.hypot(a[0]-b[0], a[1]-b[1]) < tol; }
+
+  // For each closed shape, find which of its vertices are touched by an open piece's endpoint.
+  var openEnds = [];
+  open.forEach(function(o){ openEnds.push(o.pts[0], o.pts[o.pts.length-1]); });
+
+  var strands = [];   // the surviving open runs from each closed shape
+  for (var c = 0; c < closed.length; c++){
+    var P = closed[c].pts, n = P.length;
+    var hits = [];
+    for (var v = 0; v < n; v++)
+      if (openEnds.some(function(q){ return near(P[v], q); })) hits.push(v);
+    if (hits.length !== 2) return null;                 // need exactly two junctions per shape
+    var a = hits[0], b = hits[1];
+    // two perimeter runs between the junctions: a->b forward, and b->a forward (wrapping)
+    function run(from, to){
+      var out = [], k = from, guard = 0;
+      while (guard++ <= n){
+        out.push(P[k].slice());
+        if (k === to) break;
+        k = (k+1) % n;
+      }
+      return out;
+    }
+    var runA = run(a, b), runB = run(b, a);
+    // keep the run that is FARTHER from the other closed shapes (the outer wall);
+    // the discarded one is the inner wall facing the assembly
+    function centroidOf(list){
+      var sx=0, sy=0; list.forEach(function(q){ sx+=q[0]; sy+=q[1]; }); return [sx/list.length, sy/list.length];
+    }
+    var others = [];
+    for (var c2 = 0; c2 < closed.length; c2++) if (c2 !== c) others.push(centroidOf(closed[c2].pts));
+    if (!others.length) return null;
+    function distToOthers(list){
+      var m = centroidOf(list), best = 1e9;
+      others.forEach(function(o){ best = Math.min(best, Math.hypot(m[0]-o[0], m[1]-o[1])); });
+      return best;
+    }
+    strands.push({pts: distToOthers(runA) >= distToOthers(runB) ? runA : runB});
+  }
+
+  // chain: all surviving strands + the open bridging pieces, end to end
+  var parts = strands.concat(open.map(function(o){ return {pts:o.pts.map(function(q){ return q.slice(); })}; }));
+  var used = parts.map(function(){ return false; });
+  var chain = parts[0].pts.map(function(q){ return q.slice(); });
+  used[0] = true;
+  var grew = true, guard2 = 0;
+  while (grew && guard2++ < 500){
+    grew = false;
+    for (var k2 = 0; k2 < parts.length; k2++){
+      if (used[k2]) continue;
+      var pc = parts[k2].pts, tail = chain[chain.length-1], head = chain[0];
+      function rev(list){
+        var out = [], m = list.length;
+        for (var z = m-1; z >= 0; z--) out.push([list[z][0], list[z][1], z > 0 ? -(list[z-1][2]||0) : 0]);
+        return out;
+      }
+      if (near(tail, pc[0])){ chain[chain.length-1][2] = pc[0][2]||0; for (var z1=1; z1<pc.length; z1++) chain.push(pc[z1].slice()); used[k2]=true; grew=true; break; }
+      var r = rev(pc);
+      if (near(tail, r[0])){ chain[chain.length-1][2] = r[0][2]||0; for (var z2=1; z2<r.length; z2++) chain.push(r[z2].slice()); used[k2]=true; grew=true; break; }
+      if (near(head, pc[pc.length-1])){ chain = pc.slice(0, pc.length-1).map(function(q){return q.slice();}).concat(chain); used[k2]=true; grew=true; break; }
+      if (near(head, r[r.length-1])){ chain = r.slice(0, r.length-1).map(function(q){return q.slice();}).concat(chain); used[k2]=true; grew=true; break; }
+    }
+  }
+  if (used.some(function(u){ return !u; })) return null;   // something didn't connect
+  var isClosed = near(chain[0], chain[chain.length-1]);
+  if (isClosed){
+    var b2 = chain[chain.length-1][2] || 0;
+    chain.pop();
+    chain[chain.length-1][2] = b2 || chain[chain.length-1][2] || 0;
+  }
+  if (chain.length < 3) return null;
+  var allStraight = chain.every(function(q){ return Math.abs(q[2]||0) < 1e-12; });
+  return allStraight
+    ? {t:'poly', pts: chain.map(function(q){ return [q[0], q[1]]; }), closed: isClosed}
+    : {t:'path', pts: chain.map(function(q){ return [q[0], q[1], q[2]||0]; }), closed: isClosed};
+}
+
 function doJoin(){
   var tol = 0.05;
   // each fragment is a list of vertices [x,y,bulge]; bulge lives on the vertex that STARTS its span
   var frags = [], src = [];
+  var closedCount = 0, circleCount = 0;
   SEL.forEach(function(i){
-    var f = fragOf(DOC.ents[i]);
+    var e = DOC.ents[i];
+    var f = fragOf(e);
     if (f){ frags.push(f.map(function(v){ return v.slice(); })); src.push(i); }
+    else {
+      // why was it unusable? closed shapes and full circles have no free ends to chain
+      if (e.t === 'circle') circleCount++;
+      else if (e.closed) closedCount++;
+    }
   });
-  if (frags.length < 2) return false;
+  if (closedCount || circleCount){
+    // closed shapes in the selection: the user wants them merged with their bridges
+    var merged = mergeWithBridges(SEL.slice());
+    if (merged){
+      pushUndo();
+      var keepEnts = DOC.ents.filter(function(_, i){ return SEL.indexOf(i) < 0; });
+      keepEnts.push(merged);
+      DOC.ents = keepEnts;
+      SEL = [];
+      doJoin.lastMiss = null; doJoin.merged = true;
+      return true;
+    }
+  }
+  if (frags.length < 2){
+    doJoin.lastMiss = (closedCount || circleCount) ? 'closed' : 'few';
+    return false;
+  }
 
   function endpt(f, which){ return which ? f[f.length-1] : f[0]; }
   function near(a, b){ return Math.hypot(a[0]-b[0], a[1]-b[1]) < tol; }
@@ -2885,12 +3080,31 @@ function wirePanel(){
   document.getElementById('redoBtn').addEventListener('click', doRedo);
   document.getElementById('fitBtn2').addEventListener('click', fit);
   document.getElementById('joinBtn').addEventListener('click', function(){
-    if (!SEL.length){ stagePrompt('selFirst'); return; }
-    if (doJoin()){ persist(); draw(); }
+    if (!SEL.length){
+      toast('info', 'Nothing selected', 'Select the open pieces you want to join, then press Join.');
+      stagePrompt('selFirst'); return;
+    }
+    var n0 = DOC.ents.length;
+    if (doJoin()){
+      persist(); draw();
+      toast('ok', doJoin.merged ? 'Merged into one outline' : 'Joined',
+            doJoin.merged ? 'Opened the shapes at their junctions and chained everything into a single profile.'
+                          : 'Connected the selected pieces.');
+      doJoin.merged = false;
+    } else if (doJoin.lastMiss === 'closed'){
+      toast('info', 'Those shapes are closed',
+        'Join links pieces that have open ends. To merge closed shapes with their connectors into one outline: use Trim to cut each shape where the connectors meet it, remove the inner pieces, then Join what is left. (One-click merge/weld is coming.)');
+    } else {
+      toast('warn', 'Nothing to join', 'Select at least two open pieces (lines, arcs, or open polylines) whose ends meet.');
+    }
   });
   document.getElementById('explodeBtn').addEventListener('click', function(){
-    if (!SEL.length){ stagePrompt('selFirst'); return; }
-    if (doExplode()){ persist(); draw(); }
+    if (!SEL.length){
+      toast('info', 'Nothing selected', 'Select shapes to break into separate lines and arcs.');
+      stagePrompt('selFirst'); return;
+    }
+    if (doExplode()){ persist(); draw(); toast('ok', 'Exploded', 'Broke the selection into individual lines and arcs.'); }
+    else toast('warn', 'Nothing to explode', 'Explode works on rectangles, polylines and paths.');
   });
   document.getElementById('newBtn').addEventListener('click', function(){
     if (!DOC.ents.length && !DOC.guides.length) return;
