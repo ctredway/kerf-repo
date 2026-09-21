@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kerf · G-code inspector</title>
+<title>454 Control · G-code sender</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -30,6 +30,8 @@
   header{grid-column:1/3;display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
   header .brand{font-weight:700;font-size:17px;letter-spacing:.2px}
   header .brand span{color:var(--amber)}
+  #openDesign{color:var(--amber);text-decoration:none;font-size:13px;font-weight:600;padding:5px 10px;border:1px solid var(--line);border-radius:5px;white-space:nowrap}
+  #openDesign:hover{border-color:var(--amber);background:rgba(232,163,61,0.08)}
   header .sub{color:var(--muted);font-size:12.5px}
   header .spacer{flex:1}
   #fileName{font-family:var(--mono);font-size:12.5px;color:var(--muted);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -146,6 +148,23 @@
   .smPane.active{display:block}
   #bzModal{position:fixed;inset:0;background:rgba(10,13,17,.65);display:flex;align-items:center;justify-content:center;z-index:65}
   #bzModal[hidden]{display:none}
+  #qaModal{position:fixed;inset:0;background:rgba(10,13,17,.65);display:flex;align-items:center;justify-content:center;z-index:66}
+  #qaModal[hidden]{display:none}
+  #qaPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;width:460px;box-shadow:0 14px 44px rgba(0,0,0,.55)}
+  #qaPanel .qaLbl{display:block;font-size:12.5px;color:var(--muted);margin:8px 0 4px}
+  #qaPanel input[type=text]{width:100%;box-sizing:border-box}
+  #qaCode{width:100%;box-sizing:border-box;font-family:var(--mono);font-size:12.5px;line-height:1.5;background:var(--panel-deep);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px;resize:vertical}
+  #qaCode:focus{outline:none;border-color:var(--amber)}
+  #qaIssues{margin-top:8px;font-size:12px;line-height:1.5}
+  #qaIssues .qaIssueHead{color:var(--muted)}
+  #qaIssues .qaIssue.err{color:#e06c5a} #qaIssues .qaIssue.warn{color:#d98e3f}
+  .qaHead{display:flex;align-items:center;gap:8px}
+  .qaAddBtn{margin-left:auto;font-size:12px;padding:3px 9px}
+  #qaList{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .qaItem{display:flex;min-width:0}
+  .qaRunBtn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;border-top-right-radius:0;border-bottom-right-radius:0}
+  .qaEditBtn{width:30px;padding:0;border-left:0;border-top-left-radius:0;border-bottom-left-radius:0;color:var(--muted)}
+  #qaList .note{grid-column:1/-1}
   #bzPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;width:430px;box-shadow:0 14px 44px rgba(0,0,0,.55)}
   #bzCircuit.ok{background:#2b4029;color:#a9d29c}
   #runBar{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:6;display:none;align-items:center;gap:8px;background:rgba(23,28,34,.92);border:1px solid var(--line);border-radius:6px;padding:7px 12px}
@@ -188,8 +207,8 @@
 <body>
 <div id="app">
   <header>
-    <div class="brand" id="brandEl">Kerf<span>.</span></div>
-    <div class="sub">G-code inspector for Shapeoko &amp; Nomad (GRBL / Carbide Motion dialect)</div>
+    <div class="brand" id="brandEl">454<span> Control</span></div>
+    <div class="sub">G-code sender for Shapeoko &amp; Nomad (GRBL / Carbide Motion dialect)</div>
     <div class="spacer"></div>
     <div id="fileName">no file loaded</div>
     <div id="hdrMachine">
@@ -199,6 +218,7 @@
       <button id="hdrHold" class="danger iconBtn" title="Feed hold — decelerate and pause motion now"><svg viewBox="0 0 16 16"><line x1="6" y1="3.5" x2="6" y2="12.5"/><line x1="10" y1="3.5" x2="10" y2="12.5"/></svg></button>
       <button id="hdrResume" class="iconBtn" title="Cycle start / resume"><svg viewBox="0 0 16 16"><path d="M5.5 3.5 L12 8 L5.5 12.5 Z"/></svg></button>
     </div>
+    <a id="openDesign" href="design.html" target="_blank" rel="noopener" title="Open 454 Design (the sketcher) in a new tab">454 Design ↗</a>
     <button id="settingsBtn" class="iconBtn" title="Settings"><svg viewBox="0 0 16 16"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/><circle cx="10.5" cy="4" r="1.6" fill="var(--panel)"/><circle cx="5.5" cy="8" r="1.6" fill="var(--panel)"/><circle cx="11.5" cy="12" r="1.6" fill="var(--panel)"/></svg></button>
     <button id="sampleBtn" class="iconBtn" title="Load the sample file"><svg viewBox="0 0 16 16"><path d="M6 2 h4 M7 2 v4.2 l-3.4 5.8 a1.1 1.1 0 0 0 .95 1.7 h6.9 a1.1 1.1 0 0 0 .95 -1.7 L9 6.2 V2"/><line x1="5.2" y1="10.5" x2="10.8" y2="10.5"/></svg></button>
     <button id="openBtn" class="iconBtn primary" title="Open a G-code file (.nc, .gcode, .tap, .ngc)"><svg viewBox="0 0 16 16"><path d="M2 4.5 h4 l1.3 1.8 H14 v6.5 a1 1 0 0 1 -1 1 H3 a1 1 0 0 1 -1 -1 z"/></svg></button>
@@ -332,6 +352,16 @@
               <span class="chip" id="spinState">stopped</span>
             </div>
             <p class="note">Shows the commanded S value from the controller — with a VFD this is the target, not a tachometer reading. Manual starts don't wait: give it a few seconds before cutting. Streamed jobs get the spin-up dwell automatically.</p>
+          </div>
+
+          <div class="mSection">
+            <h3 class="qaHead">Quick actions <button id="qaAdd" class="qaAddBtn" title="Add a quick action">+ Add</button></h3>
+            <div id="qaList"></div>
+            <div class="mRow" id="qaRunRow" style="display:none">
+              <span id="qaStatus" style="color:var(--amber);font-size:12.5px;flex:1"></span>
+              <button id="qaCancel" class="danger" title="Stop sending the rest of the action. The current move finishes; use STOP for an immediate halt.">Cancel</button>
+            </div>
+            <p class="note">Saved G-code for things you do often. Each line is sent only after the controller confirms the one before. Use the pencil to edit.</p>
           </div>
 
           <div class="mSection">
@@ -542,10 +572,32 @@
       </div>
       <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">All settings save automatically in this browser. Export a copy as backup — importing Carbide Motion's shapeoko.json pulls in your BitSetter position and accessory setup.</p>
       <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px;font-size:12.5px;color:var(--muted);line-height:1.7">
-        <div>Kerf <span id="verChip" style="font-family:var(--mono)"></span> — free &amp; open source, MIT.</div>
+        <div>454 Control <span id="verChip" style="font-family:var(--mono)"></span> — free &amp; open source, MIT.</div>
         <div><a id="repoLink" href="https://github.com/ctredway/kerf-repo" target="_blank" rel="noopener" style="color:var(--info)">Source &amp; issues on GitHub</a>
-        &nbsp;·&nbsp; <a id="supportLink" href="https://github.com/ctredway/kerf-repo?sponsor=1" target="_blank" rel="noopener" style="color:var(--amber)">Support Kerf ♥</a></div>
+        &nbsp;·&nbsp; <a id="supportLink" href="https://github.com/ctredway/kerf-repo?sponsor=1" target="_blank" rel="noopener" style="color:var(--amber)">Support 454 Control ♥</a></div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="qaModal" hidden>
+  <div id="qaPanel" role="dialog" aria-labelledby="qaTitle">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <b id="qaTitle" style="font-size:15px">New quick action</b>
+      <div style="flex:1"></div>
+      <button id="qaClose" title="Close (Esc)">✕</button>
+    </div>
+    <label for="qaName" class="qaLbl">Name</label>
+    <input id="qaName" type="text" maxlength="40" placeholder="Move to front for a bit change" autocomplete="off">
+    <label for="qaCode" class="qaLbl">G-code, one command per line</label>
+    <textarea id="qaCode" rows="7" spellcheck="false" placeholder="G53 G0 Z-5&#10;G53 G0 X-400 Y-800"></textarea>
+    <div id="qaIssues"></div>
+    <p class="note" style="margin-top:8px">Comments in (parentheses) or after a ; are ignored. G53 moves use machine coordinates, so they go to the same place every time once the machine is homed.</p>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="qaDelete" class="danger">Delete</button>
+      <div style="flex:1"></div>
+      <button id="qaCancelEdit">Cancel</button>
+      <button id="qaSave" class="primary">Save</button>
     </div>
   </div>
 </div>
@@ -582,7 +634,7 @@
    Produces: segments (tessellated micro-moves), issues, tools
    All internal units are mm. seg.units records display units.
    ============================================================ */
-var KERF_VERSION = '0.9.0';
+var CONTROL_VERSION = '0.10.0';
 
 var SUPPORTED_G = {0:1,1:1,2:1,3:1,4:1,17:1,18:1,19:1,20:1,21:1,28:1,28.2:1,90:1,91:1,91.1:1,90.1:1,53:1};
 var IGNORED_G   = {40:'G40 cutter compensation off — accepted but ignored by Carbide Motion',
@@ -810,7 +862,7 @@ function parseGcode(text, opts){
       else if (g === 90.1) st.arcAbs = true;
       else if (g === 91.1) st.arcAbs = false;
       else if (g === 28 || g === 28.2){
-        issue('info', lineNo, 'G28 moves to a machine-defined position — Kerf cannot know where that is, so this move is not drawn.', 'g28');
+        issue('info', lineNo, 'G28 moves to a machine-defined position — 454 Control cannot know where that is, so this move is not drawn.', 'g28');
         skipMotion = true;
       }
       else if (g === 53){
@@ -1616,7 +1668,7 @@ function loadText(text, name){
 }
 
 var SAMPLE = [
-'(Kerf sample — 60mm pocket + tabbed profile, 2 tools)',
+'(454 Control sample — 60mm pocket + tabbed profile, 2 tools)',
 '(Posted in the style of VCarve GRBL mm output)',
 '(Toolpaths used in this file:)',
 '(Circle Pocket)',
@@ -1760,7 +1812,8 @@ function wire(){
     if (!document.getElementById('jogModal').hidden) return; // jog modal owns the keyboard
     if (!document.getElementById('setModal').hidden) return;  // settings modal open
     if (!document.getElementById('bzModal').hidden) return;   // probe modal open
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (!document.getElementById('qaModal').hidden) return;   // quick-action editor open
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
     if (e.code === 'Space'){ e.preventDefault(); document.getElementById('btnPlay').click(); }
     else if (e.code === 'ArrowRight'){ stepLine(1); }
     else if (e.code === 'ArrowLeft'){ stepLine(-1); }
@@ -1918,6 +1971,7 @@ function emergencyStop(){
   sendRT(0x18, 'ctrl-x (EMERGENCY STOP)');
   PROBE.active = false; PROBE.onDone = null;
   JOB.active = false; JOB.held = false; JOB.toolWait = null; JOB.inflight = [];
+  if (QA.active) qaFinish(false, 'emergency stop');
   maybeToolPrompt();
   jogFastStop(false);
   KEYJOG.code = null;
@@ -2064,6 +2118,7 @@ function bzUpdateCircuit(){
   el.classList.toggle('ok', BZ.circuitOk);
 }
 function bzStart(){
+  if (qaBusy('probe')) return;
   if (!SERIAL.connected || JOB.active || PROBE.active) return;
   if (SERIAL.state === 'Alarm'){ bzStatus('machine is locked \u2014 home ($H) or unlock ($X) first'); return; }
   readUIToProfile();
@@ -2144,6 +2199,7 @@ function rapidTo(fx, fy){
 
 /* ---------------- jog modal + keyboard ---------------- */
 function jogModalOpen(){
+  if (qaBusy('jog')) return;
   if (!SERIAL.connected){ logC('err', 'connect to the machine first'); return; }
   if (JOB.active) return;
   document.getElementById('jogModal').hidden = false;
@@ -2319,6 +2375,7 @@ function handleRx(line){
   if (line[0] === '<'){ parseStatus(line); if (SERIAL.verbose) logC('rx', line); return; }
   if (line === 'ok'){
     if (PROBE.active){ probeNext(); return; }
+    if (QA.active){ if (SERIAL.verbose) logC('ok', 'ok'); qaNext(); return; }
     if (JOGC.active || JOGC.inflight > 0){
       if (JOGC.inflight > 0) JOGC.inflight--;
       jogTopUp();
@@ -2332,6 +2389,11 @@ function handleRx(line){
   if (line.indexOf('error:') === 0){
     var c = parseInt(line.slice(6), 10);
     if (PROBE.active){ probeFail('error:' + c + ' — ' + (GRBL_ERRORS[c] || '')); return; }
+    if (QA.active){
+      logC('err', line + ' — ' + (GRBL_ERRORS[c] || 'see GRBL error list'));
+      qaFinish(false, 'the controller rejected "' + QA.lines[QA.i - 1] + '"');
+      return;
+    }
     if (JOGC.active || JOGC.inflight > 0){
       if (JOGC.inflight > 0) JOGC.inflight--;
       if (c === 15){
@@ -2349,10 +2411,14 @@ function handleRx(line){
     SERIAL.homedSeen = false; // position no longer trusted until re-homed
     logC('err', line + ' — ' + (GRBL_ALARMS[a] || 'alarm'));
     if (PROBE.active){ probeFail('ALARM:' + a + ' during probe'); return; }
+    if (QA.active) qaFinish(false, 'ALARM:' + a);
     if (JOB.active){ JOB.active = false; updateJobUI('ALARM — job aborted'); }
     return;
   }
-  if (line.indexOf('Grbl') === 0){ logC('sys', line); doQuery(); return; }
+  if (line.indexOf('Grbl') === 0){
+    if (QA.active) qaFinish(false, 'the controller was reset');
+    logC('sys', line); doQuery(); return;
+  }
   var sm = /^\$(\d+)\s*=\s*(-?[\d.]+)/.exec(line);
   if (sm){
     SERIAL.settings[parseInt(sm[1], 10)] = parseFloat(sm[2]);
@@ -2496,15 +2562,143 @@ var PROFILE = {
   spindle:{type:'router', spinup:3},
   jog:{inc:'1', fastXY:3000, fastZ:600},
   run:{highStart:true, travelZ:5, park:{enabled:false, x:null, y:null}},
-  view:{envW:425, envD:425, origin:'corner', stock:0, rapidRate:5000, checkEnvelope:false, showEnvelope:false}
+  view:{envW:425, envD:425, origin:'corner', stock:0, rapidRate:5000, checkEnvelope:false, showEnvelope:false},
+  // saved G-code snippets for things done often; edit or delete these starters freely
+  quick:[
+    {name:'Raise Z to top', code:'G53 G0 Z-5'},
+    {name:'Spindle warm-up', code:'(2 minutes: slow, then faster)\nM3 S8000\nG4 P60\nM3 S16000\nG4 P60\nM5'}
+  ]
 };
 
+/* ============================================================
+   QUICK ACTIONS: saved G-code for things done often.
+   Lines go one at a time: each waits for the controller's "ok" before the
+   next is sent, so a multi-line action can never overflow GRBL's small
+   input buffer. Any error, alarm, reset or E-stop ends the action.
+   ============================================================ */
+var QA = {active:false, name:'', lines:[], i:0};
+function qaLines(code){
+  return String(code).split(/\r?\n/).map(function(l){ return cleanForSend(l); })
+                     .filter(function(l){ return l && l !== '%'; });
+}
+function qaBusy(what){
+  if (!QA.active) return false;
+  logC('err', 'Can\u2019t ' + what + ' while the quick action "' + QA.name + '" is running. Wait for it, or press Cancel.');
+  return true;
+}
+function qaRun(k){
+  var qa = PROFILE.quick[k];
+  if (!qa) return;
+  if (!SERIAL.connected){ logC('err', 'Quick action "' + qa.name + '": connect to the machine first.'); return; }
+  if (QA.active){ logC('err', 'The quick action "' + QA.name + '" is still running.'); return; }
+  if (JOB.active || PROBE.active || JOGC.active){ logC('err', 'Quick action "' + qa.name + '": the machine is busy with a job, probe or jog.'); return; }
+  if (SERIAL.state === 'Alarm'){ logC('err', 'Quick action "' + qa.name + '": the machine is locked. Home ($H) or unlock first.'); return; }
+  if (SERIAL.state !== 'Idle'){ logC('err', 'Quick action "' + qa.name + '": wait until the machine is Idle (it is ' + SERIAL.state + ').'); return; }
+  var lines = qaLines(qa.code);
+  if (!lines.length){ logC('err', 'Quick action "' + qa.name + '" has no commands in it.'); return; }
+  if (!SERIAL.homedSeen && lines.some(function(l){ return /G0*53(?![.\d])|G0*28(?![.\d])|G0*30(?![.\d])/i.test(l); })){
+    if (!confirm('"' + qa.name + '" uses machine coordinates (G53/G28/G30), but the machine hasn\u2019t been homed this session, so those positions may be somewhere unexpected.\n\nRun it anyway?')) return;
+  }
+  QA.active = true; QA.name = qa.name; QA.lines = lines; QA.i = 0;
+  logC('sys', 'quick action "' + qa.name + '": ' + lines.length + (lines.length === 1 ? ' line' : ' lines'));
+  qaRender();
+  qaNext();
+}
+function qaNext(){
+  if (!QA.active) return;
+  if (QA.i >= QA.lines.length){ qaFinish(true); return; }
+  sendLine(QA.lines[QA.i++]);
+  var st = document.getElementById('qaStatus');
+  if (st) st.textContent = 'Running \u201c' + QA.name + '\u201d \u2014 line ' + QA.i + ' of ' + QA.lines.length;
+}
+function qaFinish(ok, why){
+  if (!QA.active) return;
+  var n = QA.name;
+  QA.active = false; QA.lines = []; QA.i = 0;
+  if (ok) logC('sys', 'quick action "' + n + '" sent (moves may still be finishing)');
+  else logC('err', 'quick action "' + n + '" stopped: ' + why + '. Nothing further was sent.');
+  qaRender();
+}
+function qaRender(){
+  var list = document.getElementById('qaList');
+  if (!list) return;
+  list.innerHTML = '';
+  (PROFILE.quick || []).forEach(function(qa, k){
+    var row = document.createElement('div'); row.className = 'qaItem';
+    var run = document.createElement('button'); run.className = 'qaRunBtn'; run.textContent = qa.name;
+    run.title = 'Run: ' + qaLines(qa.code).join(' \u00b7 ');
+    run.disabled = QA.active;
+    run.addEventListener('click', function(){ qaRun(k); });
+    var ed = document.createElement('button'); ed.className = 'qaEditBtn'; ed.textContent = '\u270e';
+    ed.title = 'Edit \u201c' + qa.name + '\u201d'; ed.setAttribute('aria-label', 'Edit ' + qa.name);
+    ed.disabled = QA.active;
+    ed.addEventListener('click', function(){ qaEditOpen(k); });
+    row.appendChild(run); row.appendChild(ed); list.appendChild(row);
+  });
+  if (!(PROFILE.quick || []).length){
+    var em = document.createElement('p'); em.className = 'note'; em.textContent = 'No quick actions yet. Add one for anything you type often.';
+    list.appendChild(em);
+  }
+  var rr = document.getElementById('qaRunRow');
+  if (rr) rr.style.display = QA.active ? '' : 'none';
+  var add = document.getElementById('qaAdd'); if (add) add.disabled = QA.active;
+}
+// ---- editor ----
+var QAEDIT = null;   // index being edited, or -1 for a new one
+function qaEditOpen(k){
+  QAEDIT = (k === undefined || k === null) ? -1 : k;
+  var qa = QAEDIT >= 0 ? PROFILE.quick[QAEDIT] : {name:'', code:''};
+  document.getElementById('qaTitle').textContent = QAEDIT >= 0 ? 'Edit quick action' : 'New quick action';
+  document.getElementById('qaName').value = qa.name;
+  document.getElementById('qaCode').value = qa.code;
+  document.getElementById('qaDelete').style.display = QAEDIT >= 0 ? '' : 'none';
+  qaCheck();
+  document.getElementById('qaModal').hidden = false;
+  document.getElementById(QAEDIT >= 0 ? 'qaCode' : 'qaName').focus();
+}
+function qaEditClose(){ document.getElementById('qaModal').hidden = true; QAEDIT = null; }
+// run the file checker over the snippet, so a typo is caught before it reaches the machine
+function qaCheck(){
+  var out = document.getElementById('qaIssues'), code = document.getElementById('qaCode').value;
+  out.innerHTML = '';
+  if (!code.trim()){ return; }
+  var res = parseGcode(code, {rapidRate: 5000});
+  var shown = res.issues.filter(function(it){
+    return (it.sev === 'err' || it.sev === 'warn') && !/^No G20\/G21/.test(it.msg) && !/before the spindle is started/.test(it.msg);
+  });
+  var n = qaLines(code).length;
+  var head = document.createElement('div'); head.className = 'qaIssueHead';
+  head.textContent = n + (n === 1 ? ' line will be sent' : ' lines will be sent') + (shown.length ? '' : ' \u2014 no problems found');
+  out.appendChild(head);
+  shown.forEach(function(it){
+    var d = document.createElement('div'); d.className = 'qaIssue ' + it.sev;
+    d.textContent = 'Line ' + it.line + ': ' + it.msg;
+    out.appendChild(d);
+  });
+}
+function qaSave(){
+  var name = document.getElementById('qaName').value.trim(), code = document.getElementById('qaCode').value;
+  if (!name){ document.getElementById('qaName').focus(); logC('err', 'Give the quick action a name.'); return; }
+  if (!qaLines(code).length){ document.getElementById('qaCode').focus(); logC('err', 'The quick action needs at least one G-code line.'); return; }
+  if (!PROFILE.quick) PROFILE.quick = [];
+  if (QAEDIT >= 0) PROFILE.quick[QAEDIT] = {name:name, code:code};
+  else PROFILE.quick.push({name:name, code:code});
+  profileSave(); qaEditClose(); qaRender();
+}
+function qaDelete(){
+  if (QAEDIT === null || QAEDIT < 0) return;
+  var nm = PROFILE.quick[QAEDIT].name;
+  if (!confirm('Delete the quick action "' + nm + '"?')) return;
+  PROFILE.quick.splice(QAEDIT, 1);
+  profileSave(); qaEditClose(); qaRender();
+}
+
 function profileSave(){
-  try{ localStorage.setItem('kerf-profile', JSON.stringify(PROFILE)); }catch(e){}
+  try{ localStorage.setItem('454-control-profile', JSON.stringify(PROFILE)); }catch(e){}
 }
 function profileLoad(){
   try{
-    var s = localStorage.getItem('kerf-profile');
+    var s = localStorage.getItem('454-control-profile') || localStorage.getItem('kerf-profile'); // older saves
     if (!s) return;
     var p = JSON.parse(s);
     if (p.bitSetter) PROFILE.bitSetter = Object.assign(PROFILE.bitSetter, p.bitSetter);
@@ -2517,6 +2711,7 @@ function profileLoad(){
       PROFILE.run.park = pk;
     }
     if (p.view)      PROFILE.view      = Object.assign(PROFILE.view, p.view);
+    if (Array.isArray(p.quick)) PROFILE.quick = p.quick;
   }catch(e){}
 }
 /* retract standoff below Z top-of-travel (machine coords), used by
@@ -2598,9 +2793,16 @@ function importProfileJSON(j){
     if (j.bitZero)   PROFILE.bitZero   = Object.assign(PROFILE.bitZero, j.bitZero);
     if (j.spindle)   PROFILE.spindle   = Object.assign(PROFILE.spindle, j.spindle);
     if (j.view)      PROFILE.view      = Object.assign(PROFILE.view, j.view);
-    logC('sys', 'Kerf profile imported');
+    if (j.jog)       PROFILE.jog       = Object.assign(PROFILE.jog, j.jog);
+    if (j.run){
+      var ipk = Object.assign({}, PROFILE.run.park, j.run.park || {});
+      PROFILE.run = Object.assign(PROFILE.run, j.run); PROFILE.run.park = ipk;
+    }
+    if (Array.isArray(j.quick)) PROFILE.quick = j.quick;
+    if (typeof qaRender === 'function') qaRender();
+    logC('sys', '454 Control profile imported');
   } else {
-    logC('err', 'unrecognized profile file — expected a Kerf profile or Carbide Motion shapeoko.json');
+    logC('err', 'unrecognized profile file — expected a 454 Control profile or Carbide Motion shapeoko.json');
     return;
   }
   profileSave();
@@ -2863,6 +3065,7 @@ function onAck(ok, code){
 }
 
 function jobStart(){
+  if (qaBusy('run a job')) return;
   if (!MODEL || !MODEL.segs.length){ alert('Load a G-code file first.'); return; }
   if (!SERIAL.connected){ alert('Connect to the machine first (Machine tab).'); return; }
   if (JOB.active) return;
@@ -3090,7 +3293,10 @@ function wireMachine(){
       e.stopImmediatePropagation(); bzCloseModal(); return;
     }
     if (!document.getElementById('setModal').hidden){
-      e.stopImmediatePropagation(); settingsClose();
+      e.stopImmediatePropagation(); settingsClose(); return;
+    }
+    if (!document.getElementById('qaModal').hidden){
+      e.stopImmediatePropagation(); qaEditClose();
     }
   }, true);
 
@@ -3099,6 +3305,17 @@ function wireMachine(){
   document.getElementById('bzClose').addEventListener('click', bzCloseModal);
   document.getElementById('bzEstop').addEventListener('click', emergencyStop);
   document.getElementById('bzStart').addEventListener('click', bzStart);
+  document.getElementById('qaAdd').addEventListener('click', function(){ qaEditOpen(null); });
+  document.getElementById('qaCancel').addEventListener('click', function(){ qaFinish(false, 'cancelled'); });
+  document.getElementById('qaClose').addEventListener('click', qaEditClose);
+  document.getElementById('qaCancelEdit').addEventListener('click', qaEditClose);
+  document.getElementById('qaSave').addEventListener('click', qaSave);
+  document.getElementById('qaDelete').addEventListener('click', qaDelete);
+  document.getElementById('qaCode').addEventListener('input', qaCheck);
+  document.getElementById('qaPanel').addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); qaSave(); }
+  });
+  qaRender();
   document.getElementById('bzModal').addEventListener('pointerdown', function(e){
     if (e.target === e.currentTarget && !PROBE.active) bzCloseModal();
   });
@@ -3238,7 +3455,7 @@ function wireMachine(){
     var blob = new Blob([JSON.stringify(PROFILE, null, 2)], {type:'application/json'});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'kerf-profile.json';
+    a.download = '454-control-profile.json';
     a.click();
     setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
   });
@@ -3275,8 +3492,8 @@ function wireMachine(){
 document.addEventListener('DOMContentLoaded', function(){
   wire();
   wireMachine();
-  document.getElementById('verChip').textContent = 'v' + KERF_VERSION;
-  document.getElementById('brandEl').title = 'Kerf v' + KERF_VERSION;
+  document.getElementById('verChip').textContent = 'v' + CONTROL_VERSION;
+  document.getElementById('brandEl').title = '454 Control v' + CONTROL_VERSION;
 });
 </script>
 </body>
