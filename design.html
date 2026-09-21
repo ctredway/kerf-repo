@@ -179,7 +179,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.28.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.29.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -1589,6 +1589,36 @@ function draw(){
   }
 
   // snap marker
+  // polyline being drawn: label each committed segment with its length
+  if (TOOL === 'poly' && DRAW && DRAW.pts && DRAW.pts.length > 1){
+    ctx.save();
+    ctx.font = '11px ' + 'system-ui, sans-serif';
+    ctx.fillStyle = '#e8a33d';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (var sl = 1; sl < DRAW.pts.length; sl++){
+      var a1 = DRAW.pts[sl-1], b1 = DRAW.pts[sl];
+      var L1 = Math.hypot(b1[0]-a1[0], b1[1]-a1[1]);
+      if (L1 < 1e-6) continue;
+      var mid = w2s((a1[0]+b1[0])/2, (a1[1]+b1[1])/2);
+      // nudge the label off the line along its normal so it stays readable
+      var nx = -(b1[1]-a1[1])/L1, ny = (b1[0]-a1[0])/L1;
+      ctx.fillText(L1.toFixed(2), mid.x + nx*11, mid.y - ny*11);
+    }
+    // the segment in progress, to the cursor
+    if (MOUSE.snap){
+      var lp = DRAW.pts[DRAW.pts.length-1];
+      var Lc = Math.hypot(MOUSE.snap.x-lp[0], MOUSE.snap.y-lp[1]);
+      if (Lc > 1e-6){
+        var midc = w2s((lp[0]+MOUSE.snap.x)/2, (lp[1]+MOUSE.snap.y)/2);
+        var ncx = -(MOUSE.snap.y-lp[1])/Lc, ncy = (MOUSE.snap.x-lp[0])/Lc;
+        ctx.fillStyle = '#ffc96b';
+        ctx.fillText(Lc.toFixed(2), midc.x + ncx*11, midc.y - ncy*11);
+      }
+    }
+    ctx.restore();
+  }
+
   // polyline: show a box over the first point when hovering close enough to close the loop
   if (TOOL === 'poly' && DRAW && DRAW.pts && DRAW.pts.length > 2 && MOUSE.snap){
     var f0 = DRAW.pts[0];
@@ -2789,9 +2819,17 @@ function entDims(e){
   if (e.t === 'arc')    return 'R ' + e.r.toFixed(2) + '  sweep ' + (arcSweep(e)*180/Math.PI).toFixed(1) + '\u00b0' + (e.ccw ? ' CCW' : ' CW');
   if (e.t === 'rect')   return 'W ' + e.w.toFixed(2) + '  H ' + e.h.toFixed(2);
   if (e.t === 'poly'){
-    var L = 0;
-    entityEdges(e).forEach(function(ed){ L += Math.hypot(ed[2]-ed[0], ed[3]-ed[1]); });
-    return e.pts.length + ' pts  L ' + L.toFixed(2) + (e.closed ? '  closed' : '');
+    var L = 0, segs = [];
+    entityEdges(e).forEach(function(ed){
+      var sl2 = Math.hypot(ed[2]-ed[0], ed[3]-ed[1]);
+      L += sl2; segs.push(sl2);
+    });
+    var extra = '';
+    if (segs.length){
+      var mn = Math.min.apply(null, segs), mx = Math.max.apply(null, segs);
+      extra = '  \u00b7 segs ' + segs.length + ' (' + mn.toFixed(2) + '\u2013' + mx.toFixed(2) + ')';
+    }
+    return e.pts.length + ' pts  L ' + L.toFixed(2) + (e.closed ? '  closed' : '') + extra;
   }
   if (e.t === 'path'){
     var tp = tessPath(e), PL = 0;
@@ -2816,6 +2854,15 @@ function updateReadout(){
     } else if (TOOL==='circle' && DRAW.stage===1){
       var r = Math.hypot(MOUSE.snap.x-DRAW.x, MOUSE.snap.y-DRAW.y);
       d = 'R ' + r.toFixed(2) + '  D ' + (r*2).toFixed(2);
+    } else if (TOOL==='poly' && DRAW.pts && DRAW.pts.length){
+      var lastP = DRAW.pts[DRAW.pts.length-1];
+      var pdx = MOUSE.snap.x-lastP[0], pdy = MOUSE.snap.y-lastP[1];
+      var segL = Math.hypot(pdx, pdy);
+      var runT = 0;
+      for (var pl = 1; pl < DRAW.pts.length; pl++)
+        runT += Math.hypot(DRAW.pts[pl][0]-DRAW.pts[pl-1][0], DRAW.pts[pl][1]-DRAW.pts[pl-1][1]);
+      d = 'seg ' + segL.toFixed(2) + '  \u2220 ' + (Math.atan2(pdy,pdx)*180/Math.PI).toFixed(1) + '\u00b0' +
+          '  \u00b7 total ' + (runT + segL).toFixed(2) + '  (' + DRAW.pts.length + ' pts)';
     } else if (TOOL==='arc' && DRAW.stage===1){
       d = 'chord ' + Math.hypot(MOUSE.snap.x-DRAW.ax, MOUSE.snap.y-DRAW.ay).toFixed(2);
     } else if (TOOL==='arc' && DRAW.stage===2){
