@@ -127,6 +127,43 @@
   #toolPanel button.tool{width:100%;height:36px}
 
   #canvasWrap{grid-row:2;grid-column:2;position:relative;min-width:0;min-height:0}
+  #libModal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:210}
+  #libModal[hidden]{display:none}
+  #libPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;width:min(980px,94vw);height:min(680px,88vh);display:flex;flex-direction:column;box-shadow:0 14px 48px rgba(0,0,0,.55)}
+  #libPanel .libHead{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}
+  #libPanel .libHead h3{margin:0;font-size:16px}
+  #libSource{font-size:12px;color:var(--muted)}
+  #libPanel .grow{flex:1}
+  #libPanel .libBar{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap;font-size:13px;color:var(--muted)}
+  #libPanel .libBar label{display:flex;align-items:center;gap:6px}
+  #libSearch{margin-left:auto;width:220px}
+  #libPanel .libBody{flex:1;display:grid;grid-template-columns:minmax(260px,38%) 1fr;min-height:0}
+  #libTree{overflow-y:auto;border-right:1px solid var(--line);padding:6px 0;font-size:13px}
+  #libTree details>summary{cursor:pointer;padding:4px 10px;color:var(--ink);font-weight:600;list-style-position:inside}
+  #libTree details details>summary{font-weight:500}
+  #libTree .libKids{padding-left:14px}
+  #libTree .libItem{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:0;border-radius:0;padding:4px 10px 4px 14px;color:var(--ink);font-size:12.5px;cursor:pointer}
+  #libTree .libItem:hover{background:rgba(255,255,255,.04)}
+  #libTree .libItem[aria-selected=true]{background:rgba(232,163,61,.16)}
+  #libTree .libItem .ln{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #libTree .libT{font-family:var(--mono);font-size:11px;color:var(--amber)}
+  #libDetail{overflow-y:auto;padding:14px 18px;font-size:13px}
+  #libDetail h4{margin:0 0 2px;font-size:15px}
+  #libDetail .libType{color:var(--amber);font-size:12px;margin-bottom:12px}
+  #libDetail h5{margin:16px 0 6px;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+  #libDetail dl{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin:0}
+  #libDetail dt{color:var(--muted)} #libDetail dd{margin:0;font-family:var(--mono);font-size:12px}
+  #libDetail table{border-collapse:collapse;width:100%;font-size:12px}
+  #libDetail th{text-align:left;color:var(--muted);font-weight:500;padding:4px 8px;border-bottom:1px solid var(--line)}
+  #libDetail td{padding:4px 8px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11.5px}
+  #libDetail tr.on td{background:rgba(232,163,61,.12)}
+  #libEmpty{padding:28px 32px;font-size:13.5px;line-height:1.6;color:var(--ink)}
+  #libEmpty ol{margin:8px 0 0 18px;padding:0}
+  .tpLib{display:block;width:100%;text-align:left;background:none;border:0;border-radius:4px;padding:3px 0 0;margin-top:3px;font-size:11.5px;line-height:1.4;cursor:pointer}
+  .tpLib:hover{text-decoration:underline}
+  .tpLib.ok{color:#7fb069} .tpLib.warn{color:#d98e3f} .tpLib.miss{color:var(--muted)}
+  .tpCut{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
+  #tpPanel .tpNote button{font-size:11.5px;padding:2px 8px;margin-top:6px}
   #tpPanel{grid-row:2;grid-column:3;width:292px;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line)}
   #tpPanel[hidden]{display:none}
   #tpPanel .tpHead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
@@ -169,6 +206,7 @@
     <div class="sub" id="verSub">precision 2D sketcher</div>
     <div class="spacer"></div>
     <a id="openControl" href="index.html" target="_blank" rel="noopener" title="Open 454 Control (the machine sender) in a new tab">454 Control ↗</a>
+    <button id="libBtn" title="Tool library: your bits, tool numbers, and feeds and speeds">Tool library</button>
     <button id="tpToggle" hidden aria-expanded="false" aria-controls="tpPanel" title="Show or hide the toolpaths found in the VCarve project">VCarve toolpaths</button>
     <button id="settingsBtn" title="Settings — stock size, display colors">⚙ Settings</button>
     <input type="file" id="loadFile" accept=".json,.crv,.dxf" hidden>
@@ -256,9 +294,37 @@
 
   <div id="toolPanel"></div>
 
+  <div id="libModal" hidden>
+    <div id="libPanel" role="dialog" aria-labelledby="libTitle">
+      <div class="libHead">
+        <h3 id="libTitle">Tool library</h3><span id="libSource"></span><span class="grow"></span>
+        <button id="libRemove" title="Remove the library from this browser">Remove</button>
+        <button id="libImport" class="primary" title="Import VCarve's tools.vtdb">Import VCarve library…</button>
+        <button id="libClose" title="Close (Esc)">✕</button>
+      </div>
+      <div class="libBar" id="libBar">
+        <label for="libMachine">Machine <select id="libMachine"></select></label>
+        <label for="libMaterial">Material <select id="libMaterial"></select></label>
+        <input id="libSearch" type="search" placeholder="Search tools" aria-label="Search tools">
+      </div>
+      <div class="libBody" id="libBody"><div id="libTree" role="tree" aria-label="Tools"></div><div id="libDetail"></div></div>
+      <div id="libEmpty" hidden>
+        <b>No tool library yet.</b> Import your VCarve library and 454 will read every bit, its tool numbers and its feeds and speeds, just as VCarve stores them.
+        <ol>
+          <li>In VCarve, open the <b>File</b> menu and choose <b>Open Application Data Folder</b>.</li>
+          <li>Open the <b>ToolDatabase</b> folder. Close VCarve, then copy <b>tools.vtdb</b> somewhere handy.</li>
+          <li>Press <b>Import VCarve library…</b> above and pick that copy.</li>
+        </ol>
+        <p style="color:var(--muted);margin-top:12px">The library stays in this browser and is shared with 454 Control and 454 CAM.</p>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="libFile" accept=".vtdb" hidden>
+
   <aside id="tpPanel" hidden aria-label="VCarve toolpaths">
     <div class="tpHead"><b>VCarve toolpaths</b><span id="tpCount"></span><button id="tpClose" title="Hide this panel">✕</button></div>
     <p class="tpNote">Read from the VCarve project, in the order VCarve lists them. They show how the job was set up; 454 Design can&rsquo;t cut them yet, and editing the drawing doesn&rsquo;t update them.</p>
+    <p class="tpNote" id="tpLibNote"></p>
     <div id="tpList"></div>
   </aside>
 
@@ -314,7 +380,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.42.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.43.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -1999,7 +2065,15 @@ function vcToolpathsFrom(bytes){
     else if (type === 'Toolpath' && /profile/i.test(named)) type = 'Profile';
     var tool = null;
     for (var tj = tools.length - 1; tj >= 0; tj--) if (tools[tj].at < g.at){ tool = tools[tj]; break; }
-    return {name:g.name, type:type, tool: tool ? {num:tool.num, name:tool.name, rpm:tool.rpm} : null, set:set};
+    // the machine and material VCarve used for this toolpath (IDs from its tool database) sit between
+    // the tool record and the toolpath's name
+    var mid = null, matid = null, floor = tool ? tool.at : -1;
+    for (var z = g.idx - 1; z >= 0 && kv[z].at > floor; z--){
+      if (mid === null && kv[z].k === 'db_machine_id') mid = String(kv[z].v);
+      if (matid === null && kv[z].k === 'db_material_id') matid = String(kv[z].v);
+    }
+    return {name:g.name, type:type, tool: tool ? {num:tool.num, name:tool.name, rpm:tool.rpm} : null, set:set,
+            machineId:mid, materialId:matid};
   });
 }
 
@@ -2013,6 +2087,17 @@ function renderToolpathPanel(){
   if (pan.hidden === show) pan.hidden = !show;          // the canvas's size observer redraws it to fit
   if (!show) return;
   document.getElementById('tpCount').textContent = list.length + (list.length === 1 ? ' toolpath' : ' toolpaths');
+  var ln = document.getElementById('tpLibNote');
+  ln.innerHTML = '';
+  if (!TOOLLIB){
+    ln.appendChild(document.createTextNode('Import your VCarve tool library to check these tools against your own bits.'));
+    var ib = document.createElement('button'); ib.textContent = 'Open tool library'; ib.addEventListener('click', function(){ libOpen(); });
+    ln.appendChild(document.createElement('br')); ln.appendChild(ib);
+  } else {
+    var fromProj = list.some(function(t){ return t.machineId && libMachineName(t.machineId); });
+    ln.textContent = 'Compared with your tool library' + (fromProj ? ', using the machine each toolpath was made for where the library has it; otherwise ' : ', using ') +
+                     libMachineName(libDefaultMachine()) + '.';
+  }
   var box = document.getElementById('tpList');
   box.innerHTML = '';
   list.forEach(function(tp){
@@ -2056,6 +2141,23 @@ function renderToolpathPanel(){
     var tl = document.createElement('div'); tl.className = 'tpTool';
     tl.textContent = tp.tool ? 'T' + tp.tool.num + ' \u00b7 ' + tp.tool.name + ' \u00b7 ' + tp.tool.rpm + ' rpm' : 'Tool not found in the file';
     card.appendChild(tl);
+    if (TOOLLIB && tp.tool){
+      // the project's own machine when the library knows it, else the library's chosen machine
+      var mid = tp.machineId && libMachineName(tp.machineId) ? tp.machineId : libDefaultMachine();
+      var mr = libMatch(tp.tool, mid), lb = document.createElement('button');
+      lb.className = 'tpLib ' + (mr.status === 'match' ? 'ok' : mr.status === 'number' ? 'warn' : 'miss');
+      if (mr.status === 'match') lb.textContent = '\u2713 In your library as T' + tp.tool.num;
+      else if (mr.status === 'number') lb.textContent = mr.libNum !== undefined
+        ? '\u26a0 Your library has this bit as T' + mr.libNum + ' (the project uses T' + tp.tool.num + ')'
+        : '\u26a0 In your library, but with no tool number on ' + libMachineName(mid);
+      else lb.textContent = 'Not in your tool library';
+      if (mr.tool){ lb.title = 'Open ' + mr.tool.name + ' in the tool library'; lb.addEventListener('click', function(){ libOpen(mr.tool.id); }); }
+      else { lb.disabled = true; lb.style.cursor = 'default'; }
+      card.appendChild(lb);
+      var matId = tp.materialId && libMaterialName(tp.materialId) ? tp.materialId : null;
+      var cut = mr.tool && matId ? libCutFor(mr.tool, mid, matId) : null;
+      if (cut){ var ct = document.createElement('div'); ct.className = 'tpCut'; ct.textContent = libMaterialName(matId) + ': ' + libCutText(cut); card.appendChild(ct); }
+    }
     if (rows.length){
       var dl = document.createElement('dl'); dl.className = 'tpSet';
       rows.forEach(function(r){
@@ -2067,6 +2169,326 @@ function renderToolpathPanel(){
     }
     box.appendChild(card);
   });
+}
+
+/* ============================================================
+   TOOL LIBRARY
+   Mirrors VCarve's model: a bit's shape, a tool number per machine, and
+   cutting values per machine + material, each value keeping its own units.
+   Imported straight from VCarve's tools.vtdb (a SQLite file, read in the
+   browser with sql.js). Stored in IndexedDB, so every 454 app on this site
+   (Design, Control, CAM) sees the same library.
+   ============================================================ */
+var TOOLLIB = null;                     // the library, once loaded
+var SQLJS_BASE = 'https://cdn.jsdelivr.net/npm/sql.js@1.14.2/dist/';
+var TOOL_TYPES = {0:'Ball Nose', 1:'End Mill', 2:'Radiused End Mill', 3:'V-Bit', 4:'Engraving',
+                  5:'Tapered Ball Nose', 6:'Drill', 8:'Form Tool', 9:'Diamond Drag'};
+var RATE_UNITS = {1:'mm/min', 4:'in/min'};     // the two codes in real libraries; others are shown as codes
+function libTrim(v, dp){ return String(+(+v).toFixed(dp === undefined ? 4 : dp)); }
+function libFraction(v){                        // inches as VCarve shows them: 0.25 -> 1/4, 1.25 -> 1 1/4
+  var n = Math.round(v * 64);
+  if (Math.abs(v * 64 - n) > 1e-6 || n === 0) return libTrim(v);
+  var whole = Math.floor(n / 64), rem = n % 64, den = 64;
+  while (rem && rem % 2 === 0){ rem /= 2; den /= 2; }
+  return (whole ? whole + (rem ? ' ' : '') : '') + (rem ? rem + '/' + den : '');
+}
+// VCarve builds most tool names from a template, e.g. {Tool Type} ({Diameter|F}{Units Short})
+function libRenderName(fmt, t){
+  if (!fmt) return TOOL_TYPES[t.type] || 'Tool';
+  if (fmt.indexOf('{') < 0) return fmt.trim();
+  var inch = t.units === 'in';
+  function num(v, f){
+    if (v === null || v === undefined) return '?';
+    if (f === 'F') return inch ? libFraction(v) : libTrim(v);
+    var m = /^\.(\d+)$/.exec(f || '');            // '.0' = one decimal place, '.00' = two (60.0\u00b0)
+    return m ? (+v).toFixed(m[1].length) : libTrim(v);
+  }
+  return fmt.replace(/\{([^}|]+)(?:\|([^}]*))?\}/g, function(_, key, f){
+    key = key.trim();
+    if (key === 'Tool Type') return TOOL_TYPES[t.type] || 'Tool';
+    if (key === 'Diameter') return num(t.diameter, f);
+    if (key === 'Included Angle' || key === 'Side Angle') return num(t.angle, f);
+    if (key === 'Flat Diameter') return num(t.flat, f);
+    if (key === 'Units Short') return inch ? '"' : ' mm';
+    if (key === 'Line Width') return t.lineWidth !== null && t.lineWidth !== undefined ? num(t.lineWidth) : '?';
+    return '';
+  }).trim();
+}
+// sql.js is ~700 KB, so it's fetched only when someone imports a library
+function libLoadSql(){
+  return new Promise(function(res, rej){
+    if (window.initSqlJs) return res(window.initSqlJs);
+    var sc = document.createElement('script');
+    sc.src = SQLJS_BASE + 'sql-wasm.js';
+    sc.onload = function(){ window.initSqlJs ? res(window.initSqlJs) : rej(new Error('sql.js did not load')); };
+    sc.onerror = function(){ rej(new Error('could not download the database reader')); };
+    document.head.appendChild(sc);
+  }).then(function(init){ return init({locateFile: function(f){ return SQLJS_BASE + f; }}); });
+}
+// read a VCarve tools.vtdb (as a sql.js Database) into 454's library format
+function libFromVtdb(db, fileName){
+  function rows(sql){
+    var r = db.exec(sql);
+    if (!r.length) return [];
+    var cols = r[0].columns;
+    return r[0].values.map(function(v){ var o = {}; cols.forEach(function(c, i){ o[c] = v[i]; }); return o; });
+  }
+  var need = ['tool_geometry', 'tool_entity', 'tool_cutting_data'];
+  var have = rows("select name from sqlite_master where type='table'").map(function(r){ return r.name; });
+  need.forEach(function(t){ if (have.indexOf(t) < 0) throw new Error('not a VCarve tool database (no ' + t + ' table)'); });
+  var machines = have.indexOf('machine') >= 0 ? rows('select id, name, make, model, controller_type from machine') : [];
+  var materials = have.indexOf('material') >= 0 ? rows('select id, name from material') : [];
+  var tools = {}, order = [];
+  rows('select * from tool_geometry').forEach(function(g){
+    tools[g.id] = {id:g.id, fmt:g.name_format || '', type:g.tool_type, typeName: TOOL_TYPES[g.tool_type] || ('type ' + g.tool_type),
+                   units: g.units === 1 ? 'in' : 'mm', diameter:g.diameter, angle:g.included_angle, flat:g.flat_diameter,
+                   tipRadius:g.tip_radius, flutes:g.num_flutes, fluteLength:g.flute_length, notes:g.notes || '',
+                   numbers:{}, cuts:[], lineWidth:null};
+    order.push(g.id);
+  });
+  rows('select e.tool_geometry_id gid, e.machine_id mid, e.material_id matid, d.* from tool_entity e join tool_cutting_data d on d.id = e.tool_cutting_data_id')
+    .forEach(function(r){
+      var t = tools[r.gid];
+      if (!t) return;
+      if (r.tool_number !== null && r.tool_number !== undefined) t.numbers[r.mid || ''] = r.tool_number;   // numbers belong to a machine
+      if (r.line_width !== null && r.line_width !== undefined && t.lineWidth === null) t.lineWidth = r.line_width;
+      if (r.feed_rate === null && r.plunge_rate === null && r.spindle_speed === null && r.stepdown === null) return;
+      t.cuts.push({machine:r.mid || null, material:r.matid || null, rateUnits:r.rate_units, lengthUnits: r.length_units === 1 ? 'in' : 'mm',
+                   feed:r.feed_rate, plunge:r.plunge_rate, rpm:r.spindle_speed, stepdown:r.stepdown, stepover:r.stepover,
+                   clearStepover:r.clear_stepover, notes:r.notes || ''});
+    });
+  order.forEach(function(id){ tools[id].name = libRenderName(tools[id].fmt, tools[id]); });
+  // VCarve's folder tree; anything not in it lands in "Other tools"
+  var tree = [];
+  if (have.indexOf('tool_tree_entry') >= 0){
+    var ents = rows('select id, parent_group_id pid, sibling_order ord, tool_geometry_id gid, name from tool_tree_entry');
+    var byId = {};
+    ents.forEach(function(e){ byId[e.id] = {id:e.id, name:e.name || '', tool:e.gid || null, ord:e.ord || 0, kids:[]}; });
+    ents.forEach(function(e){
+      var node = byId[e.id];
+      if (e.pid && byId[e.pid]) byId[e.pid].kids.push(node); else tree.push(node);
+    });
+    (function sortAll(list){ list.sort(function(a, b){ return a.ord - b.ord; }); list.forEach(function(n){ sortAll(n.kids); }); })(tree);
+    var inTree = {};
+    ents.forEach(function(e){ if (e.gid) inTree[e.gid] = true; });
+    var loose = order.filter(function(id){ return !inTree[id]; });
+    if (loose.length) tree.push({id:'_loose', name:'Other tools', tool:null, ord:1e9, kids:loose.map(function(id){ return {id:'_l' + id, tool:id, kids:[]}; })});
+  } else {
+    tree.push({id:'_all', name:'All tools', tool:null, kids:order.map(function(id){ return {id:'_a' + id, tool:id, kids:[]}; })});
+  }
+  (function prune(list){ list.forEach(function(n){ delete n.ord; prune(n.kids); }); })(tree);
+  return {v:1, source:{file:fileName || 'tools.vtdb', importedAt:Date.now()},
+          machines: machines.map(function(m){ return {id:m.id, name:m.name || 'Machine', make:m.make || '', model:m.model || '', controller:m.controller_type || ''}; }),
+          materials: materials.map(function(m){ return {id:m.id, name:m.name || 'Material'}; }),
+          tools: order.map(function(id){ return tools[id]; }), tree: tree};
+}
+// ---- storage (IndexedDB is shared by every page on this site) ----
+function libDB(){
+  return new Promise(function(res, rej){
+    if (!window.indexedDB) return rej(new Error('no indexedDB'));
+    var rq = indexedDB.open('d454Tools', 1);
+    rq.onupgradeneeded = function(){ rq.result.createObjectStore('lib'); };
+    rq.onsuccess = function(){ res(rq.result); };
+    rq.onerror = function(){ rej(rq.error); };
+  });
+}
+function libSave(lib){
+  return libDB().then(function(db){
+    return new Promise(function(res, rej){
+      var tx = db.transaction('lib', 'readwrite');
+      tx.objectStore('lib').put(lib, 'main');
+      tx.oncomplete = function(){ res(); }; tx.onerror = function(){ rej(tx.error); };
+    });
+  });
+}
+function libLoad(){
+  return libDB().then(function(db){
+    return new Promise(function(res){
+      var rq = db.transaction('lib', 'readonly').objectStore('lib').get('main');
+      rq.onsuccess = function(){ res(rq.result || null); };
+      rq.onerror = function(){ res(null); };
+    });
+  }).catch(function(){ return null; });
+}
+function libClear(){
+  return libDB().then(function(db){
+    return new Promise(function(res){ var tx = db.transaction('lib', 'readwrite'); tx.objectStore('lib').delete('main'); tx.oncomplete = function(){ res(); }; });
+  });
+}
+// ---- lookups ----
+function libTool(id){ if (!TOOLLIB) return null; for (var i = 0; i < TOOLLIB.tools.length; i++) if (TOOLLIB.tools[i].id === id) return TOOLLIB.tools[i]; return null; }
+function libMachineName(id){ if (!TOOLLIB) return ''; for (var i = 0; i < TOOLLIB.machines.length; i++) if (TOOLLIB.machines[i].id === id) return TOOLLIB.machines[i].name; return ''; }
+function libMaterialName(id){ if (!TOOLLIB) return ''; for (var i = 0; i < TOOLLIB.materials.length; i++) if (TOOLLIB.materials[i].id === id) return TOOLLIB.materials[i].name; return ''; }
+// the machine to use when the project doesn't say: the one chosen in the library, else the one with the most numbered tools
+function libDefaultMachine(){
+  if (!TOOLLIB || !TOOLLIB.machines.length) return null;
+  if (UICFG.libMachine && libMachineName(UICFG.libMachine)) return UICFG.libMachine;
+  var best = null, bestN = -1;
+  TOOLLIB.machines.forEach(function(m){
+    var n = TOOLLIB.tools.filter(function(t){ return t.numbers[m.id] !== undefined; }).length;
+    if (n > bestN){ best = m.id; bestN = n; }
+  });
+  return best;
+}
+// Match a tool from a project (name + tool number) against the library, for one machine.
+// Name finds the bit; the number is then checked, and a difference is REPORTED, never hidden.
+function libMatch(ptool, machineId){
+  if (!TOOLLIB || !ptool) return {status:'nolib'};
+  var nm = String(ptool.name || '').trim().toLowerCase();
+  var cands = TOOLLIB.tools.filter(function(t){ return String(t.name).trim().toLowerCase() === nm; });
+  if (!cands.length) return {status:'missing'};
+  var same = cands.filter(function(t){ return t.numbers[machineId] === ptool.num; });
+  if (same.length) return {status:'match', tool:same[0], machine:machineId};
+  var numbered = cands.filter(function(t){ return t.numbers[machineId] !== undefined; });
+  var t0 = numbered[0] || cands[0];
+  return {status:'number', tool:t0, machine:machineId, libNum: t0.numbers[machineId]};
+}
+function libCutFor(tool, machineId, materialId){
+  for (var i = 0; i < tool.cuts.length; i++){ var c = tool.cuts[i]; if (c.machine === machineId && c.material === materialId) return c; }
+  return null;
+}
+function libCutText(c){
+  var ru = RATE_UNITS[c.rateUnits] || ('rate code ' + c.rateUnits), lu = c.lengthUnits === 'in' ? ' in' : ' mm';
+  var parts = [];
+  if (c.feed !== null) parts.push('feed ' + libTrim(c.feed, 2) + ' ' + ru);
+  if (c.plunge !== null) parts.push('plunge ' + libTrim(c.plunge, 2));
+  if (c.rpm !== null) parts.push(c.rpm + ' rpm');
+  if (c.stepdown !== null) parts.push('stepdown ' + libTrim(c.stepdown) + lu);
+  if (c.stepover !== null) parts.push('stepover ' + libTrim(c.stepover) + lu);
+  return parts.join(' \u00b7 ');
+}
+
+// ---- the Tool library dialog ----
+var LIBUI = {sel:null, q:''};
+function libOpen(selectId){
+  if (selectId) LIBUI.sel = selectId;
+  document.getElementById('libModal').hidden = false;
+  libRender();
+  document.getElementById(TOOLLIB ? 'libSearch' : 'libImport').focus();
+}
+function libCloseDlg(){ document.getElementById('libModal').hidden = true; }
+function libRender(){
+  var has = !!(TOOLLIB && TOOLLIB.tools.length);
+  document.getElementById('libEmpty').hidden = has;
+  document.getElementById('libBar').style.display = has ? '' : 'none';
+  document.getElementById('libBody').style.display = has ? '' : 'none';
+  document.getElementById('libRemove').style.display = has ? '' : 'none';
+  document.getElementById('libSource').textContent = has
+    ? TOOLLIB.tools.length + ' tools \u00b7 from ' + TOOLLIB.source.file + ' \u00b7 ' + new Date(TOOLLIB.source.importedAt).toLocaleDateString()
+    : '';
+  if (!has) return;
+  var mSel = document.getElementById('libMachine'), matSel = document.getElementById('libMaterial');
+  var mid = libDefaultMachine();
+  mSel.innerHTML = '';
+  TOOLLIB.machines.forEach(function(m){ var o = document.createElement('option'); o.value = m.id; o.textContent = m.name; mSel.appendChild(o); });
+  mSel.value = mid;
+  matSel.innerHTML = '<option value="">All materials</option>';
+  TOOLLIB.materials.forEach(function(m){ var o = document.createElement('option'); o.value = m.id; o.textContent = m.name; matSel.appendChild(o); });
+  matSel.value = UICFG.libMaterial && libMaterialName(UICFG.libMaterial) ? UICFG.libMaterial : '';
+  libRenderTree(mid);
+  libRenderDetail(mid);
+}
+function libToolRow(t, mid){
+  var b = document.createElement('button');
+  b.className = 'libItem'; b.setAttribute('role', 'treeitem');
+  b.setAttribute('aria-selected', t.id === LIBUI.sel ? 'true' : 'false');
+  var ln = document.createElement('span'); ln.className = 'ln'; ln.textContent = t.name; b.appendChild(ln);
+  if (t.numbers[mid] !== undefined){ var tn = document.createElement('span'); tn.className = 'libT'; tn.textContent = 'T' + t.numbers[mid]; b.appendChild(tn); }
+  b.title = t.name;
+  b.addEventListener('click', function(){ LIBUI.sel = t.id; libRenderTree(mid); libRenderDetail(mid); });
+  return b;
+}
+function libRenderTree(mid){
+  var box = document.getElementById('libTree');
+  box.innerHTML = '';
+  var q = LIBUI.q.trim().toLowerCase();
+  if (q){                                                       // searching: a flat list of matches
+    var hits = TOOLLIB.tools.filter(function(t){ return t.name.toLowerCase().indexOf(q) >= 0 || t.typeName.toLowerCase().indexOf(q) >= 0; });
+    hits.forEach(function(t){ box.appendChild(libToolRow(t, mid)); });
+    if (!hits.length){ var em = document.createElement('p'); em.style.cssText = 'padding:10px 14px;color:var(--muted)'; em.textContent = 'No tools match.'; box.appendChild(em); }
+    return;
+  }
+  (function add(list, into){
+    list.forEach(function(n){
+      if (n.tool){ var t = libTool(n.tool); if (t) into.appendChild(libToolRow(t, mid)); return; }
+      var d = document.createElement('details');
+      var containsSel = LIBUI.sel && JSON.stringify(n).indexOf('"' + LIBUI.sel + '"') >= 0;
+      if (containsSel) d.open = true;
+      var sm = document.createElement('summary'); sm.textContent = n.name || 'Folder'; d.appendChild(sm);
+      var kids = document.createElement('div'); kids.className = 'libKids'; d.appendChild(kids);
+      add(n.kids, kids);
+      into.appendChild(d);
+    });
+  })(TOOLLIB.tree, box);
+}
+function libRenderDetail(mid){
+  var box = document.getElementById('libDetail'), t = LIBUI.sel ? libTool(LIBUI.sel) : null;
+  box.innerHTML = '';
+  if (!t){ var p0 = document.createElement('p'); p0.style.color = 'var(--muted)'; p0.textContent = 'Pick a tool to see its details, tool numbers, and feeds and speeds.'; box.appendChild(p0); return; }
+  function el(tag, txt, cls){ var e = document.createElement(tag); if (txt !== undefined) e.textContent = txt; if (cls) e.className = cls; return e; }
+  box.appendChild(el('h4', t.name));
+  box.appendChild(el('div', t.typeName + ' \u00b7 ' + (t.units === 'in' ? 'inches' : 'millimetres'), 'libType'));
+  var u = t.units === 'in' ? ' in' : ' mm', dl = el('dl');
+  function row(k, v){ if (v === null || v === undefined || v === '') return; dl.appendChild(el('dt', k)); dl.appendChild(el('dd', v)); }
+  row('Diameter', t.diameter !== null ? libTrim(t.diameter) + u : null);
+  if (t.angle !== null && t.angle !== undefined) row(t.type === 4 ? 'Side angle' : 'Angle', libTrim(t.angle, 2) + '\u00b0');
+  if (t.flat) row(t.type === 4 ? 'Tip' : 'Flat diameter', libTrim(t.flat) + u);
+  if (t.tipRadius) row('Tip radius', libTrim(t.tipRadius) + u);
+  row('Flutes', t.flutes);
+  if (t.fluteLength) row('Flute length', libTrim(t.fluteLength) + u);
+  if (t.notes) row('Notes', t.notes);
+  box.appendChild(el('h5', 'Geometry')); box.appendChild(dl);
+  box.appendChild(el('h5', 'Tool numbers'));
+  var nums = el('dl'), any = false;
+  TOOLLIB.machines.forEach(function(m){ if (t.numbers[m.id] !== undefined){ any = true; nums.appendChild(el('dt', m.name)); nums.appendChild(el('dd', 'T' + t.numbers[m.id])); } });
+  box.appendChild(any ? nums : el('p', 'No tool number on any machine.'));
+  box.appendChild(el('h5', 'Feeds and speeds \u2014 ' + libMachineName(mid)));
+  var cuts = t.cuts.filter(function(c){ return c.machine === mid; });
+  if (!cuts.length){ box.appendChild(el('p', 'No cutting data for this machine.')); return; }
+  var tb = el('table'), hr = el('tr');
+  ['Material', 'Feed', 'Plunge', 'Spindle', 'Stepdown', 'Stepover'].forEach(function(h){ hr.appendChild(el('th', h)); });
+  tb.appendChild(hr);
+  var matSel = document.getElementById('libMaterial').value;
+  cuts.forEach(function(c){
+    var ru = RATE_UNITS[c.rateUnits] || ('code ' + c.rateUnits), lu = c.lengthUnits === 'in' ? ' in' : ' mm';
+    var tr = el('tr');
+    if (matSel && c.material === matSel) tr.className = 'on';
+    [libMaterialName(c.material) || 'Any',
+     c.feed !== null ? libTrim(c.feed, 2) + ' ' + ru : '\u2014',
+     c.plunge !== null ? libTrim(c.plunge, 2) + ' ' + ru : '\u2014',
+     c.rpm !== null ? c.rpm + ' rpm' : '\u2014',
+     c.stepdown !== null ? libTrim(c.stepdown) + lu : '\u2014',
+     c.stepover !== null ? libTrim(c.stepover) + lu : '\u2014'].forEach(function(v){ tr.appendChild(el('td', v)); });
+    tb.appendChild(tr);
+  });
+  box.appendChild(tb);
+}
+function libImportFile(f){
+  var btn = document.getElementById('libImport');
+  btn.disabled = true; btn.textContent = 'Reading\u2026';
+  function done(){ btn.disabled = false; btn.textContent = 'Import VCarve library\u2026'; }
+  var rd = new FileReader();
+  rd.onload = function(){
+    var bytes = new Uint8Array(rd.result);
+    var head = String.fromCharCode.apply(null, bytes.subarray(0, 15));
+    if (head !== 'SQLite format 3'){ done(); toast('err', 'That isn\u2019t a VCarve tool library', 'Pick the tools.vtdb file from VCarve\u2019s ToolDatabase folder.'); return; }
+    libLoadSql().then(function(SQL){
+      var lib = libFromVtdb(new SQL.Database(bytes), f.name);
+      if (TOOLLIB && TOOLLIB.tools.length &&
+          !confirm('Replace your current tool library (' + TOOLLIB.tools.length + ' tools from ' + TOOLLIB.source.file + ') with ' + lib.tools.length + ' tools from ' + f.name + '?')){ done(); return; }
+      return libSave(lib).then(function(){
+        TOOLLIB = lib; LIBUI.sel = null; LIBUI.q = ''; document.getElementById('libSearch').value = '';
+        done(); libRender(); renderToolpathPanel();
+        toast('ok', 'Tool library imported', lib.tools.length + ' tools, ' + lib.machines.length + (lib.machines.length === 1 ? ' machine' : ' machines') + ' and ' +
+              lib.materials.length + (lib.materials.length === 1 ? ' material' : ' materials') + ' from ' + f.name + '.');
+      });
+    }).catch(function(err){
+      done();
+      toast('err', 'Couldn\u2019t import that library', (err && err.message ? err.message.charAt(0).toUpperCase() + err.message.slice(1) : 'Unknown error') +
+            '. Reading a library needs an internet connection the first time.');
+    });
+  };
+  rd.readAsArrayBuffer(f);
 }
 
 function crvExtract(buf){
@@ -5114,6 +5536,8 @@ function uiCfgLoad(){
       if (c.nestMargin >= 0) UICFG.nestMargin = c.nestMargin;
       if (c.nestRot) UICFG.nestRot = c.nestRot;
       if (typeof c.tpPanel === 'boolean') UICFG.tpPanel = c.tpPanel;
+      if (c.libMachine) UICFG.libMachine = c.libMachine;
+      if (typeof c.libMaterial === 'string') UICFG.libMaterial = c.libMaterial;
       if (c.lastTextH > 0) UICFG.lastTextH = c.lastTextH;
     }
   }catch(e){}
@@ -5358,6 +5782,30 @@ function wire(){
   }
   function closeSettings(){ settingsModal.hidden = true; }
   document.getElementById('settingsBtn').addEventListener('click', openSettings);
+  document.getElementById('libBtn').addEventListener('click', function(){ libOpen(); });
+  document.getElementById('libClose').addEventListener('click', libCloseDlg);
+  document.getElementById('libImport').addEventListener('click', function(){ document.getElementById('libFile').click(); });
+  document.getElementById('libFile').addEventListener('change', function(ev){
+    var f = ev.target.files && ev.target.files[0]; ev.target.value = '';
+    if (f) libImportFile(f);
+  });
+  document.getElementById('libRemove').addEventListener('click', function(){
+    if (!TOOLLIB || !confirm('Remove the tool library (' + TOOLLIB.tools.length + ' tools) from this browser? Your VCarve file is not affected.')) return;
+    libClear().then(function(){ TOOLLIB = null; LIBUI.sel = null; libRender(); renderToolpathPanel(); toast('info', 'Tool library removed', 'Import it again any time.'); });
+  });
+  document.getElementById('libMachine').addEventListener('change', function(e){
+    UICFG.libMachine = e.target.value; uiCfgSave(); libRenderTree(e.target.value); libRenderDetail(e.target.value); renderToolpathPanel();
+  });
+  document.getElementById('libMaterial').addEventListener('change', function(e){
+    UICFG.libMaterial = e.target.value; uiCfgSave(); libRenderDetail(libDefaultMachine());
+  });
+  document.getElementById('libSearch').addEventListener('input', function(e){ LIBUI.q = e.target.value; libRenderTree(libDefaultMachine()); });
+  document.getElementById('libPanel').addEventListener('keydown', function(e){
+    if (e.key === 'Escape'){ e.preventDefault(); libCloseDlg(); }
+    e.stopPropagation();
+  });
+  document.getElementById('libModal').addEventListener('pointerdown', function(e){ if (e.target.id === 'libModal') libCloseDlg(); });
+  libLoad().then(function(lib){ if (lib && lib.tools){ TOOLLIB = lib; renderToolpathPanel(); } });
   document.getElementById('tpToggle').addEventListener('click', function(){ UICFG.tpPanel = !UICFG.tpPanel; uiCfgSave(); renderToolpathPanel(); });
   document.getElementById('tpClose').addEventListener('click', function(){ UICFG.tpPanel = false; uiCfgSave(); renderToolpathPanel(); });
   renderToolpathPanel();
@@ -5774,6 +6222,7 @@ function wire(){
   window.addEventListener('keydown', function(e){
     if (!document.getElementById('textModal').hidden) return;   // the text dialog owns the keyboard
     if (!document.getElementById('nestModal').hidden) return;   // so does the nesting dialog
+    if (!document.getElementById('libModal').hidden) return;    // and the tool library
     if (e.key === 'Escape' && !document.getElementById('msgPanel').hidden){ setMsgPanel(false); return; }
     var inField = e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA';
     // Ctrl-combos are global: they work from anywhere, including while an input has focus,
