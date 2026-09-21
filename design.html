@@ -222,7 +222,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.36.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.36.1'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -494,7 +494,7 @@ function refreshFontSelect(selKey){
   sel.value = selKey;
 }
 function openTextModal(idx, at){
-  DRAW = null; HANDLES.mode = 'scale';
+  DRAW = null; HANDLES.mode = 'scale'; HANDLES.active = false;
   var e;
   pushUndo();                                     // one undo step for the whole add/edit
   if (idx === null || idx === undefined){
@@ -964,7 +964,8 @@ var HOVER = null; // last computed hover status, for cursor feedback in draw()
 var DIMSEL = null; // index of the dimension under edit, if any
 // Transform handles around the selection (Select tool). Click a selected shape again to switch
 // between SCALE handles (corners proportional, sides one direction) and ROTATE handles.
-var HANDLES = {mode:'scale', pivot:null, sig:''};
+var HANDLES = {mode:'scale', pivot:null, sig:'', active:false};   // active: shown after a double-click
+function selSig(){ return SEL.slice().sort(function(a,b){ return a-b; }).join(','); }
 function selHandleBox(){
   var b = selBBox();
   if (!b) return null;
@@ -995,7 +996,7 @@ function selHandleList(){
   ];
 }
 function handleAt(mx, my){
-  if (TOOL !== 'select' || !SEL.length) return null;
+  if (TOOL !== 'select' || !SEL.length || !HANDLES.active) return null;
   var hs = selHandleList();
   for (var i = hs.length - 1; i >= 0; i--)                 // pivot is last, so it wins ties
     if (Math.hypot(mx - hs[i].sx, my - hs[i].sy) <= 9) return hs[i];
@@ -1106,6 +1107,7 @@ function toolMgrEnter(t){
   // clean slate: no leftover in-progress geometry, no stolen focus, field cleared
   DRAW = null;
   if (t !== 'node') NODE = null;
+  HANDLES.active = false;
   var pinEl = document.getElementById('promptIn');
   if (pinEl){ pinEl.value = ''; pinEl.blur(); }
   hidePrompt();
@@ -2355,9 +2357,10 @@ function draw(){
 
   // snap marker
   // ---- selection transform handles ----
-  if (TOOL === 'select' && SEL.length && !(DRAW && DRAW.stage === 'marq')){
-    var hsig = SEL.slice().sort(function(a,b){ return a-b; }).join(',');
-    if (HANDLES.sig !== hsig){ HANDLES.sig = hsig; HANDLES.mode = 'scale'; HANDLES.pivot = null; }
+  if (HANDLES.sig !== selSig()){                   // selection changed: handles go away
+    HANDLES.sig = selSig(); HANDLES.active = false; HANDLES.mode = 'scale'; HANDLES.pivot = null;
+  }
+  if (TOOL === 'select' && SEL.length && HANDLES.active && !(DRAW && DRAW.stage === 'marq')){
     var hbx = selHandleBox();
     if (hbx){
       ctx.save();
@@ -4110,7 +4113,7 @@ var PANEL_BTNS = {
  circle:{tool:'circle', icon:'circ', title:'Circle (C) \u2014 center then radius point, or type D5 for diameter'},
  arc:   {tool:'arc', icon:'arc', title:'Arc (A) \u2014 start point, end point, then bow it with the mouse (3-point) or type a radius; + bows left of start\u2192end, \u2212 right'},
  poly:  {tool:'poly', icon:'poly', title:'Polyline (P) \u2014 click points, Enter ends, click start to close'},
- textT: {tool:'text', icon:'text', title:'Text (K) \u2014 click where the text starts; double-click text later to edit it'},
+ textT: {tool:'text', icon:'text', title:'Text (K) \u2014 click where the text starts. To edit text later, click it with this tool, or double-click it twice with Select'},
  flipHBtn:{id:'flipHBtn', icon:'flipH', title:'Flip horizontal (Shift+H) \u2014 mirror the selection left to right, in place'},
  flipVBtn:{id:'flipVBtn', icon:'flipV', title:'Flip vertical (Shift+V) \u2014 mirror the selection top to bottom, in place'},
  curvesBtn:{id:'curvesBtn', icon:'curves', title:'Convert to curves \u2014 turn selected text into ordinary shapes you can trim, offset and cut'},
@@ -4471,7 +4474,13 @@ function wire(){
     var r0 = cv.getBoundingClientRect();
     var w0 = s2w(ev.clientX - r0.left, ev.clientY - r0.top);
     var h0 = pickEntity(w0);
-    if (h0 !== null && DOC.ents[h0].t === 'text') openTextModal(h0);
+    if (h0 === null) return;
+    var already = HANDLES.active && SEL.indexOf(h0) >= 0;
+    if (already && DOC.ents[h0].t === 'text'){ openTextModal(h0); return; }
+    if (SEL.indexOf(h0) < 0) SEL = [h0];          // double-clicking a member keeps a multi-selection
+    HANDLES.sig = selSig(); HANDLES.active = true;
+    if (!already){ HANDLES.mode = 'scale'; HANDLES.pivot = null; }
+    draw();
   });
 
   // fonts the user loaded before come back from browser storage
@@ -4702,7 +4711,7 @@ function wire(){
     }
     if (TOOL==='select' && DRAW && DRAW.stage==='drag'){
       // clicking a shape that was already selected, without moving, switches scale <-> rotate
-      if (!DRAW.moved && DRAW.wasSel) HANDLES.mode = HANDLES.mode === 'scale' ? 'rotate' : 'scale';
+      if (!DRAW.moved && DRAW.wasSel && HANDLES.active) HANDLES.mode = HANDLES.mode === 'scale' ? 'rotate' : 'scale';
       else if (DRAW.moved) HANDLES.pivot = null;
       DRAW = null; draw();
     }
@@ -4801,6 +4810,7 @@ function wire(){
       else if (DRAW){ DRAW = null; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); }
       else if (NODE){ NODE = null; stagePrompt('node0'); }     // close an open node-edit shape
       else if (TOOL !== 'select'){ setTool('select'); }
+      else if (HANDLES.active){ HANDLES.active = false; }
       else if (SEL.length){ SEL = []; }
       draw(); return;
     }
