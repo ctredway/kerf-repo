@@ -369,6 +369,9 @@
             <div id="toolBanner"><b id="toolBannerTxt">Tool change</b><br>Make sure the spindle has stopped, change the tool, re-check stickout, then continue. Without a BitSetter routine the new tool must match the old length, or re-zero Z before continuing.<div style="margin-top:8px"><button id="toolContinue" class="primary">Tool changed — continue</button></div></div>
             <div class="mRow">
               <button id="jobRun" class="primary">Run loaded file</button>
+              <label style="margin-left:10px">from line</label>
+              <input type="number" id="recLine" min="1" style="width:76px" title="Scrub the simulator to the spot, or type a line number">
+              <button id="jobRecover" title="Resume a crashed/stopped job from a line \u2014 state is reconstructed, approach is careful">Recover</button>
               <button id="jobHold">Hold</button>
               <button id="jobResume">Resume</button>
               <button id="jobStop" class="danger">Stop</button>
@@ -634,7 +637,7 @@
    Produces: segments (tessellated micro-moves), issues, tools
    All internal units are mm. seg.units records display units.
    ============================================================ */
-var CONTROL_VERSION = '0.10.0';
+var CONTROL_VERSION = '0.11.0';
 
 var SUPPORTED_G = {0:1,1:1,2:1,3:1,4:1,17:1,18:1,19:1,20:1,21:1,28:1,28.2:1,90:1,91:1,91.1:1,90.1:1,53:1};
 var IGNORED_G   = {40:'G40 cutter compensation off — accepted but ignored by Carbide Motion',
@@ -1482,6 +1485,8 @@ function fmtCoord(mm, units){
 }
 
 function updateDRO(seg, x, y, z){
+  var rl0 = document.getElementById('recLine');
+  if (rl0 && seg) rl0.placeholder = seg.line;       // recovery suggestion follows the preview, connected or not
   if (typeof SERIAL !== 'undefined' && SERIAL.connected) return; // live machine DRO wins
   var u = seg ? seg.units : 'mm';
   document.getElementById('droX').textContent = fmtCoord(x, u);
@@ -1968,6 +1973,7 @@ function jogFastStop(cancel){
    Deliberately NO confirmation dialog. */
 function emergencyStop(){
   if (!SERIAL.connected) return;
+  recoveryNote('emergency stop');
   sendRT(0x18, 'ctrl-x (EMERGENCY STOP)');
   PROBE.active = false; PROBE.onDone = null;
   JOB.active = false; JOB.held = false; JOB.toolWait = null; JOB.inflight = [];
@@ -2337,6 +2343,7 @@ async function serialDisconnect(){
 }
 
 function serialCleanup(){
+  if (JOB.active) recoveryNote('connection lost');
   if (SERIAL.pollTimer){ clearInterval(SERIAL.pollTimer); SERIAL.pollTimer = null; }
   try{ if (SERIAL.reader) SERIAL.reader.releaseLock(); }catch(e){}
   try{ if (SERIAL.writer) SERIAL.writer.releaseLock(); }catch(e){}
@@ -2412,6 +2419,7 @@ function handleRx(line){
     logC('err', line + ' — ' + (GRBL_ALARMS[a] || 'alarm'));
     if (PROBE.active){ probeFail('ALARM:' + a + ' during probe'); return; }
     if (QA.active) qaFinish(false, 'ALARM:' + a);
+    if (JOB.active) recoveryNote('ALARM:' + a);
     if (JOB.active){ JOB.active = false; updateJobUI('ALARM — job aborted'); }
     return;
   }
@@ -2939,6 +2947,79 @@ function inflightBytes(){
 }
 
 /* Pre-build the send list: cleaned lines, M6 markers, injected spin-up dwells */
+/* ---------------- job recovery ----------------
+   stateAtLine: lightweight modal walk (no tessellation) reproducing the
+   parser's interpretation up to — but not including — the target line. */
+function stateAtLine(target){
+  var st = {units:'mm', abs:true, arcAbs:false, plane:17, motion:null,
+            feedRaw:null, sVal:null, spindle:false, tool:null, pendingTool:null,
+            x:0, y:0, z:0, uncertain:false};
+  function toMM(v){ return st.units === 'in' ? v * 25.4 : v; }
+  var re = /([A-Za-z])\s*([+-]?(?:\d+\.?\d*|\.\d+))/g;
+  for (var li = 0; li < target - 1 && li < MODEL.lines.length; li++){
+    var code = MODEL.lines[li].replace(/\(.*?\)/g, ' ').replace(/;.*$/, '').trim();
+    if (!code || code === '%') continue;
+    var m, params = {}, gs = [], ms = [];
+    re.lastIndex = 0;
+    while ((m = re.exec(code)) !== null){
+      var L = m[1].toUpperCase(), V = parseFloat(m[2]);
+      if (L === 'G') gs.push(V);
+      else if (L === 'M') ms.push(V);
+      else if (L === 'F') st.feedRaw = V;
+      else if (L === 'S') st.sVal = V;
+      else if (L === 'T') st.pendingTool = V;
+      else params[L.toLowerCase()] = V;
+    }
+    var skip = false;
+    for (var g = 0; g < gs.length; g++){
+      var gv = gs[g];
+      if (gv === 0 || gv === 1 || gv === 2 || gv === 3) st.motion = gv;
+      else if (gv === 17 || gv === 18 || gv === 19) st.plane = gv;
+      else if (gv === 20) st.units = 'in';
+      else if (gv === 21) st.units = 'mm';
+      else if (gv === 90) st.abs = true;
+      else if (gv === 91) st.abs = false;
+      else if (gv === 90.1) st.arcAbs = true;
+      else if (gv === 91.1) st.arcAbs = false;
+      else if (gv === 28 || gv === 28.2 || gv === 53){ skip = true; if (params.x !== undefined || params.y !== undefined || params.z !== undefined) st.uncertain = true; }
+      else if (gv === 92 || gv === 10) st.uncertain = true;
+      else if (gv >= 54 && gv < 60 && Math.abs(gv - 54) > 1e-6) st.uncertain = true;   // switched away from G54
+      else if (gv >= 38 && gv < 39) skip = true;
+      else if (gv === 81 || gv === 82 || gv === 83 || gv === 73) skip = true;
+    }
+    for (var q = 0; q < ms.length; q++){
+      if (ms[q] === 3 || ms[q] === 4) st.spindle = true;
+      else if (ms[q] === 5) st.spindle = false;
+      else if (ms[q] === 6){ st.tool = st.pendingTool !== null ? st.pendingTool : st.tool; }
+    }
+    if (!skip && st.motion !== null &&
+        (params.x !== undefined || params.y !== undefined || params.z !== undefined)){
+      if (st.abs){
+        if (params.x !== undefined) st.x = toMM(params.x);
+        if (params.y !== undefined) st.y = toMM(params.y);
+        if (params.z !== undefined) st.z = toMM(params.z);
+      } else {
+        if (params.x !== undefined) st.x += toMM(params.x);
+        if (params.y !== undefined) st.y += toMM(params.y);
+        if (params.z !== undefined) st.z += toMM(params.z);
+      }
+    }
+  }
+  return st;
+}
+
+/* snap backward over bare-coordinate continuation lines to one that carries
+   an explicit motion word (a G2/G3 modal chain cannot be entered mid-way) */
+function recoverySnap(target){
+  var ln = target;
+  while (ln > 1){
+    if (MODEL.lineFirstSeg[ln] === undefined){ ln--; continue; } // no motion on this line
+    var code = MODEL.lines[ln - 1].replace(/\(.*?\)/g, ' ').replace(/;.*$/, '').trim();
+    if (/G\s*0*[0123](?![0-9.])/i.test(code)) return ln;
+    ln--;
+  }
+  return null;
+}
 function buildJobList(lines){
   var list = [], injected = 0, retracts = 0;
   // "stop high": climb to traverse height before any spindle stop, so the bit
@@ -3188,6 +3269,7 @@ function jobResume(){
 }
 function jobStop(){
   if (!SERIAL.connected) return;
+  recoveryNote('stopped');
   PROBE.active = false; PROBE.onDone = null;
   sendRT(0x21, '! (feed hold)');
   setTimeout(function(){
@@ -3204,6 +3286,129 @@ function jobDone(){
   updateJobUI('done — ' + JOB.acked + ' lines in ' + mins + ' min');
   logC('sys', 'job complete (' + mins + ' min)');
 }
+// When a running job is interrupted, work out where the machine actually was. GRBL accepts
+// lines well ahead of the cutting, so the last line SENT overstates progress; the line whose
+// path passes nearest the machine's last position is where cutting really stopped. The
+// EARLIEST such line wins: recutting a little is harmless, skipping is not.
+function recoveryNote(why){
+  if (!JOB.active || !MODEL || !MODEL.segs || !MODEL.segs.length) return;
+  var last = JOB.lastLn || 0, P = SERIAL.wpos;
+  var best = null;
+  if (P && last > 0){
+    for (var i = 0; i < MODEL.segs.length; i++){
+      var g = MODEL.segs[i];
+      if (g.line > last) break;
+      if (g.line < last - 3000) continue;
+      var dx = g.x1 - g.x0, dy = g.y1 - g.y0, dz = g.z1 - g.z0, L2 = dx*dx + dy*dy + dz*dz;
+      var t = L2 < 1e-18 ? 0 : Math.max(0, Math.min(1, ((P.x-g.x0)*dx + (P.y-g.y0)*dy + (P.z-g.z0)*dz) / L2));
+      var d = Math.hypot(g.x0 + t*dx - P.x, g.y0 + t*dy - P.y, g.z0 + t*dz - P.z);
+      if (!best || d < best.d - 0.05) best = {d:d, line:g.line};
+    }
+  }
+  var line = best && best.d < 5 ? best.line : Math.max(1, last - 20);
+  JOB.stopInfo = {why:why, lastSent:last, line:line, near: best ? best.d : null};
+  var rl = document.getElementById('recLine');
+  if (rl){ rl.value = line; rl.placeholder = line; }
+  logC('sys', 'job interrupted (' + why + '). Cutting stopped around line ' + line +
+       (best && best.d < 5 ? ' (nearest the machine\u2019s last position)' : ' (estimated: position unknown)') +
+       '; line ' + last + ' was the last one sent. The Recover box is set to ' + line + ' \u2014 check the spot in the preview first.');
+  try{ jumpToLine(line); }catch(e){}
+}
+
+function jobStartFrom(target){
+  if (!MODEL || !MODEL.segs.length){ alert('Load a G-code file first.'); return; }
+  if (!SERIAL.connected){ alert('Connect to the machine first.'); return; }
+  if (JOB.active) return;
+  if (SERIAL.state !== 'Idle'){ alert('Machine must be Idle (current: ' + SERIAL.state + ').'); return; }
+  if (!SERIAL.homedSeen){ alert('Recovery needs a homed machine. Home first \u2014 your work zero is stored in the controller and survives homing, so you won\u2019t need to re-zero.'); return; }
+  var snapped = recoverySnap(target);
+  if (snapped === null){ alert('No resumable motion line at or before line ' + target + '.'); return; }
+  var st = stateAtLine(snapped);
+  var full = buildJobList(MODEL.lines);
+  var si = -1;
+  for (var i = 0; i < full.length; i++){ if (full[i].ln === snapped && !full[i].m6){ si = i; break; } }
+  if (si < 0){ alert('Line ' + snapped + ' is not a sendable command.'); return; }
+  var slice = full.slice(si);
+  // strip a leading m6 marker chain remnant is unnecessary: slice starts at the motion line
+
+  var inch = st.units === 'in';
+  function u(mm){ return inch ? (mm / 25.4).toFixed(4) : mm.toFixed(3); }
+  var pre = [];
+  pre.push({text:'G21 G90', ln:0, syn:true});
+  pre.push({text:'G53 G0 Z-' + travelZ().toFixed(1), ln:0, syn:true});
+  pre.push({text:'G0 X' + st.x.toFixed(3) + ' Y' + st.y.toFixed(3), ln:0, syn:true});
+  if (st.spindle){
+    pre.push({text: st.sVal !== null ? 'M3 S' + st.sVal : 'M3', ln:0, syn:true});
+    if (PROFILE.spindle.spinup > 0) pre.push({text:'G4 P' + PROFILE.spindle.spinup, ln:0, syn:true});
+  }
+  if (inch) pre.push({text:'G20', ln:0, syn:true});
+  if (st.plane !== 17) pre.push({text:'G' + st.plane, ln:0, syn:true});
+  if (st.arcAbs) pre.push({text:'G90.1', ln:0, syn:true});
+  // approach: rapid straight down if resuming into a rapid; careful plunge into a cut
+  var seg0 = MODEL.segs[MODEL.lineFirstSeg[snapped]];
+  if (seg0.rapid || st.z >= -0.001){
+    pre.push({text:'G0 Z' + u(st.z), ln:0, syn:true});
+  } else {
+    pre.push({text:'G0 Z' + u(st.z + 2), ln:0, syn:true});
+    var cap = inch ? 15 : 400; // plunge cap in file units/min
+    var pf = st.feedRaw !== null ? Math.min(st.feedRaw, cap) : cap;
+    pre.push({text:'G1 Z' + u(st.z) + ' F' + pf, ln:0, syn:true});
+  }
+  if (!st.abs) pre.push({text:'G91', ln:0, syn:true});
+  if (st.motion === 1 && st.feedRaw !== null) pre.push({text:'G1 F' + st.feedRaw, ln:0, syn:true});
+  else if (st.motion === 0) pre.push({text:'G0', ln:0, syn:true});
+
+  var bsErr = bitSetterReady();
+  var useBS = (bsErr === null && MODEL.tools.length > 0);
+  var bsFresh = useBS && PROBE.refZ === null;            // no reference this session: measure one now
+  var firstTool = MODEL.tools.length ? MODEL.tools[0].tool : null;
+  var laterTool = st.tool !== null && firstTool !== null && String(st.tool) !== String(firstTool);
+  var toolLine;
+  if (useBS && !bsFresh)
+    toolLine = 'BitSetter: the tool in the spindle is measured first, and its length is compensated against this session\u2019s reference.\n';
+  else if (useBS)
+    toolLine = 'BitSetter: no reference yet this session, so the tool in the spindle is measured AS the reference.\n' +
+               '\u26a0 Z zero must have been set with the tool that is in the spindle NOW.\n';
+  else if (laterTool)
+    toolLine = '\u26a0\u26a0 TOOL LENGTH: this point is cut with T' + st.tool + ', but Z zero is normally set with T' + firstTool +
+               ' (the file\u2019s first tool). Without a BitSetter the controller has no length compensation after a reset.\n' +
+               '   Re-zero Z with T' + st.tool + ' in the spindle BEFORE resuming, or the depth will be off by the difference in tool length.\n';
+  else
+    toolLine = 'VERIFY: tool T' + (st.tool === null ? '?' : st.tool) + ' is loaded and Z zero is valid for it.\n';
+
+  var msg = 'RECOVERY \u2014 resume at line ' + snapped +
+            (snapped !== target ? ' (snapped back from ' + target + ': that line continues a modal move)' : '') + '\n\n' +
+            'Computed state there:\n' +
+            '  position X' + u(st.x) + ' Y' + u(st.y) + ' Z' + u(st.z) + (inch ? ' (in)' : ' (mm)') + '\n' +
+            '  tool T' + (st.tool === null ? '?' : st.tool) +
+            ' \u00b7 spindle ' + (st.spindle ? ('ON S' + st.sVal) : 'off') +
+            ' \u00b7 feed ' + (st.feedRaw !== null ? st.feedRaw : '\u2014') + '\n\n' +
+            'Sequence: climb to top \u2192 rapid to XY \u2192 ' +
+            (st.spindle ? 'spindle + ' + PROFILE.spindle.spinup + 's dwell \u2192 ' : '') +
+            (seg0.rapid || st.z >= -0.001 ? 'rapid to Z' : 'rapid to Z+2, feed-plunge to Z') + ' \u2192 stream.\n' +
+            toolLine +
+            (st.uncertain ? '\u26a0 The file uses machine-coordinate, offset or work-coordinate commands before this line \u2014 the computed position may be wrong. Air-check first.\n' : '') +
+            '\nProceed?';
+  if (!confirm(msg)) return;
+
+  JOB.active = true; JOB.held = false; JOB.toolWait = null; JOB.parkPending = false;
+  JOB.list = pre.concat(slice);
+  JOB.total = JOB.list.length; JOB.idx = 0; JOB.acked = 0;
+  JOB.inflight = []; JOB.startedAt = performance.now(); JOB.lastLn = snapped;
+  JOB.useBS = useBS;
+  ZN.val = 0; znDisplay();
+  sendRT(0x90); sendRT(0x99); sendRT(0x95);
+  bzCloseModal(); jogModalClose();
+  fitView(); animateView(0, 0.02);
+  playing = false; updatePlayBtn();
+  var fs = MODEL.lineFirstSeg[snapped];
+  if (fs !== undefined) setTime(MODEL.segs[fs].t0);
+  logC('sys', 'RECOVERY: resuming at line ' + snapped + ' (' + JOB.total + ' blocks)');
+  updateJobUI();
+  if (JOB.useBS) probeStart(bsFresh ? 'ref' : 'tool', jobFill);
+  else jobFill();
+}
+
 function updateJobUI(statusText){
   var pct = JOB.total ? Math.round(JOB.acked / JOB.total * 100) : 0;
   document.getElementById('jobBarFill').style.width = pct + '%';
@@ -3260,6 +3465,12 @@ function wireMachine(){
   });
   document.querySelectorAll('#ovRow button[data-zn]').forEach(function(b){
     b.addEventListener('click', function(){ znAdjust(parseFloat(b.dataset.zn)); });
+  });
+  document.getElementById('jobRecover').addEventListener('click', function(){
+    var el = document.getElementById('recLine');
+    var ln = parseInt(el.value || el.placeholder, 10);
+    if (!ln || ln < 1){ alert('Scrub the simulator to the resume point, or type a line number.'); return; }
+    jobStartFrom(ln);
   });
   document.getElementById('tcCapture').addEventListener('click', function(){
     if (!SERIAL.connected){ logC('err', 'connect first, jog to the tool-change spot, then capture'); return; }
