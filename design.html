@@ -222,7 +222,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.35.1'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.36.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -403,7 +403,8 @@ var TEXT_CACHE = new WeakMap();
 function textLocal(e){
   var font = fontObj(e.font);
   if (!font) return null;
-  var sig = [e.str, e.font, e.h, e.align].join('\u0001');
+  var sw = e.sw || 1;                                           // horizontal stretch factor
+  var sig = [e.str, e.font, e.h, e.align, sw].join('\u0001');
   var c = TEXT_CACHE.get(e);
   if (c && c.sig === sig && c.font === font) return c;
   var fs = e.h * font.unitsPerEm / capHeightUnits(font);        // em size giving cap height = h
@@ -415,7 +416,7 @@ function textLocal(e){
     var ox = e.align === 'center' ? -w/2 : (e.align === 'right' ? -w : 0);
     flattenGlyphCommands(font.getPath(line, ox, li * lineH, fs).commands, 0.01, raw);
   });
-  var contours = raw.map(function(ct){ return ct.map(function(p){ return [p[0], -p[1]]; }); });
+  var contours = raw.map(function(ct){ return ct.map(function(p){ return [p[0] * sw, -p[1]]; }); });
   var box = null;
   contours.forEach(function(ct){ ct.forEach(function(p){
     if (!box) box = {x0:p[0], y0:p[1], x1:p[0], y1:p[1]};
@@ -438,7 +439,7 @@ function textLocalBox(e){
   // font still loading: a reasonable estimate so the text is still visible and pickable
   var lines = String(e.str).split('\n'), n = 0;
   lines.forEach(function(l){ n = Math.max(n, l.length); });
-  var w = Math.max(1, n) * e.h * 0.62;
+  var w = Math.max(1, n) * e.h * 0.62 * (e.sw || 1);
   var ox = e.align === 'center' ? -w/2 : (e.align === 'right' ? -w : 0);
   return {x0:ox, y0:-(lines.length-1) * e.h * 1.45 - e.h * 0.25, x1:ox + w, y1:e.h};
 }
@@ -493,7 +494,7 @@ function refreshFontSelect(selKey){
   sel.value = selKey;
 }
 function openTextModal(idx, at){
-  DRAW = null;
+  DRAW = null; HANDLES.mode = 'scale';
   var e;
   pushUndo();                                     // one undo step for the whole add/edit
   if (idx === null || idx === undefined){
@@ -961,6 +962,88 @@ function hoverExtend(w){
 }
 var HOVER = null; // last computed hover status, for cursor feedback in draw()
 var DIMSEL = null; // index of the dimension under edit, if any
+// Transform handles around the selection (Select tool). Click a selected shape again to switch
+// between SCALE handles (corners proportional, sides one direction) and ROTATE handles.
+var HANDLES = {mode:'scale', pivot:null, sig:''};
+function selHandleBox(){
+  var b = selBBox();
+  if (!b) return null;
+  var tl = w2s(b.x0, b.y1), br = w2s(b.x1, b.y0), pad = 6;
+  return {b:b, L:tl.x - pad, T:tl.y - pad, R:br.x + pad, B:br.y + pad};
+}
+function selHandleList(){
+  var hb = selHandleBox();
+  if (!hb) return [];
+  var b = hb.b, mx = (hb.L + hb.R) / 2, my = (hb.T + hb.B) / 2;
+  if (HANDLES.mode === 'rotate'){
+    var pv = HANDLES.pivot || {x:(b.x0+b.x1)/2, y:(b.y0+b.y1)/2}, ps = w2s(pv.x, pv.y), o = 10;
+    return [
+      {kind:'rot', sx:hb.L-o, sy:hb.B+o, cur:'grab'}, {kind:'rot', sx:hb.R+o, sy:hb.B+o, cur:'grab'},
+      {kind:'rot', sx:hb.R+o, sy:hb.T-o, cur:'grab'}, {kind:'rot', sx:hb.L-o, sy:hb.T-o, cur:'grab'},
+      {kind:'pivot', sx:ps.x, sy:ps.y, cur:'move'}
+    ];
+  }
+  return [   // w* = the handle's own world position, a* = the opposite side that stays put
+    {kind:'corner', sx:hb.L, sy:hb.B, wx:b.x0, wy:b.y0, ax:b.x1, ay:b.y1, cur:'nesw-resize'},
+    {kind:'corner', sx:hb.R, sy:hb.B, wx:b.x1, wy:b.y0, ax:b.x0, ay:b.y1, cur:'nwse-resize'},
+    {kind:'corner', sx:hb.R, sy:hb.T, wx:b.x1, wy:b.y1, ax:b.x0, ay:b.y0, cur:'nesw-resize'},
+    {kind:'corner', sx:hb.L, sy:hb.T, wx:b.x0, wy:b.y1, ax:b.x1, ay:b.y0, cur:'nwse-resize'},
+    {kind:'y', sx:mx, sy:hb.B, wy:b.y0, ay:b.y1, cur:'ns-resize'},
+    {kind:'y', sx:mx, sy:hb.T, wy:b.y1, ay:b.y0, cur:'ns-resize'},
+    {kind:'x', sx:hb.L, sy:my, wx:b.x0, ax:b.x1, cur:'ew-resize'},
+    {kind:'x', sx:hb.R, sy:my, wx:b.x1, ax:b.x0, cur:'ew-resize'}
+  ];
+}
+function handleAt(mx, my){
+  if (TOOL !== 'select' || !SEL.length) return null;
+  var hs = selHandleList();
+  for (var i = hs.length - 1; i >= 0; i--)                 // pivot is last, so it wins ties
+    if (Math.hypot(mx - hs[i].sx, my - hs[i].sy) <= 9) return hs[i];
+  return null;
+}
+function snapJSON(e){
+  return JSON.stringify(e, function(k, v){ return (k === '_tess' || k === '_tess2') ? undefined : v; });
+}
+function restoreInto(obj, json){        // put an entity back to a saved state without replacing the object
+  var src = JSON.parse(json);
+  Object.keys(obj).forEach(function(k){ delete obj[k]; });
+  Object.assign(obj, src);
+}
+// re-apply the whole transform from the ORIGINAL shapes each frame, so nothing accumulates
+function xformApply(D, w, alt, shift){
+  SEL.forEach(function(si, k){ restoreInto(DOC.ents[si], D.snaps[k]); });
+  var h = D.h, b = D.b0;
+  if (h.kind === 'pivot'){ HANDLES.pivot = {x:w.x, y:w.y}; return; }
+  function undoOnce(){ if (!D.pushed){ pushUndo(); D.pushed = true; } }
+  if (h.kind === 'rot'){
+    var pv = D.pivot;
+    var a = Math.atan2(w.y - pv.y, w.x - pv.x) - Math.atan2(D.start.y - pv.y, D.start.x - pv.x);
+    if (shift){ var step = Math.PI / 12; a = Math.round(a / step) * step; }       // 15 degree steps
+    D.ang = a;
+    if (Math.abs(a) < 1e-12) return;
+    undoOnce();
+    SEL.forEach(function(si){ rotateEnt(DOC.ents[si], pv.x, pv.y, a); });
+    return;
+  }
+  var ox = (b.x0 + b.x1) / 2, oy = (b.y0 + b.y1) / 2;             // Alt: scale about the centre
+  if (!alt){ if (h.ax !== undefined) ox = h.ax; if (h.ay !== undefined) oy = h.ay; }
+  function ratio(pv2, hv, ov){ var den = hv - ov; return Math.abs(den) < 1e-9 ? 1 : (pv2 - ov) / den; }
+  var sx = 1, sy = 1;
+  if (h.kind === 'x') sx = ratio(w.x, h.wx, ox);
+  else if (h.kind === 'y') sy = ratio(w.y, h.wy, oy);
+  else if (shift){ sx = ratio(w.x, h.wx, ox); sy = ratio(w.y, h.wy, oy); }          // Shift: free stretch
+  else {                                                                             // proportional
+    var vx = h.wx - ox, vy = h.wy - oy, L2 = vx*vx + vy*vy;
+    sx = sy = L2 > 1e-18 ? ((w.x - ox) * vx + (w.y - oy) * vy) / L2 : 1;
+  }
+  sx = Math.max(0.001, sx); sy = Math.max(0.001, sy);
+  D.sx = sx; D.sy = sy;
+  if (Math.abs(sx - 1) < 1e-12 && Math.abs(sy - 1) < 1e-12) return;
+  undoOnce();
+  SCALE_NOTE = null;
+  SEL.forEach(function(si){ scaleEnt(DOC.ents[si], ox, oy, sx, sy); });
+  if (SCALE_NOTE) D.note = SCALE_NOTE;
+}
 var NODE = null;  // {ent:index, drag:vertexIndex|null} while the node tool has a shape open
 function nodePtsOf(e){
   // uniform [x,y,bulge] view of an editable entity, or null
@@ -1000,7 +1083,7 @@ function hoverNode(w){
   if (e.t === 'poly' || e.t === 'path') return {action:'do', hint:'edit points', idx:idx};
   return {action:'none', hint:'node editing works on polylines and paths'};
 }
-var doGroupSelectionRef = function(){}, doUngroupSelectionRef = function(){};
+var doGroupSelectionRef = function(){}, doUngroupSelectionRef = function(){}, flipBtnRef = function(){};
 // Single source of truth for tool hotkeys — both the canvas handler and the entry field use this.
 var TOOL_HOTKEYS = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide',
                     f:'fillet', t:'trim', e:'extend', d:'copy', m:'mirror', o:'rotate',
@@ -1270,10 +1353,11 @@ function toolClick(w, snap){
   else if (TOOL === 'select'){
     var hit = pickEntity(w);
     if (hit !== null){
+      var wasSel = SEL.indexOf(hit) >= 0 && !MOUSE.shift;
       if (MOUSE.shift){ selToggle(hit); }
       else if (SEL.indexOf(hit) < 0){ SEL = [hit]; } // clicking a selected member keeps the group
       if (SEL.indexOf(hit) >= 0)
-        DRAW = {stage:'drag', lx:p.x, ly:p.y, moved:false, pushed:false};
+        DRAW = {stage:'drag', lx:p.x, ly:p.y, moved:false, pushed:false, wasSel:wasSel};
     } else {
       // empty space: begin a marquee; click-vs-drag (and any deselect) resolves on pointerup
       DRAW = {stage:'marq', sx:w.x, sy:w.y, ex:w.x, ey:w.y, shift:MOUSE.shift};
@@ -2270,6 +2354,39 @@ function draw(){
   }
 
   // snap marker
+  // ---- selection transform handles ----
+  if (TOOL === 'select' && SEL.length && !(DRAW && DRAW.stage === 'marq')){
+    var hsig = SEL.slice().sort(function(a,b){ return a-b; }).join(',');
+    if (HANDLES.sig !== hsig){ HANDLES.sig = hsig; HANDLES.mode = 'scale'; HANDLES.pivot = null; }
+    var hbx = selHandleBox();
+    if (hbx){
+      ctx.save();
+      ctx.strokeStyle = 'rgba(232,163,61,0.75)'; ctx.lineWidth = 1; ctx.setLineDash([5,4]);
+      ctx.strokeRect(hbx.L, hbx.T, hbx.R - hbx.L, hbx.B - hbx.T);
+      ctx.setLineDash([]);
+      selHandleList().forEach(function(h){
+        ctx.lineWidth = 1.5; ctx.strokeStyle = '#e8a33d'; ctx.fillStyle = '#14181d';
+        if (h.kind === 'pivot'){
+          ctx.beginPath(); ctx.arc(h.sx, h.sy, 5, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(h.sx-8, h.sy); ctx.lineTo(h.sx+8, h.sy); ctx.moveTo(h.sx, h.sy-8); ctx.lineTo(h.sx, h.sy+8); ctx.stroke();
+        } else if (h.kind === 'rot'){
+          ctx.beginPath(); ctx.arc(h.sx, h.sy, 6, 0.5, Math.PI * 1.75); ctx.stroke();
+          var tx0 = h.sx + 6*Math.cos(0.5), ty0 = h.sy + 6*Math.sin(0.5);    // arrow tip
+          ctx.beginPath(); ctx.moveTo(tx0, ty0); ctx.lineTo(tx0 + 4, ty0 - 3); ctx.lineTo(tx0 - 1, ty0 - 4); ctx.closePath();
+          ctx.fillStyle = '#e8a33d'; ctx.fill();
+        } else {
+          ctx.beginPath(); ctx.rect(h.sx - 4, h.sy - 4, 8, 8); ctx.fill(); ctx.stroke();
+        }
+      });
+      if (DRAW && DRAW.stage === 'xform' && DRAW.h.kind === 'rot' && MOUSE.mx != null){
+        var pvs = w2s(DRAW.pivot.x, DRAW.pivot.y);
+        ctx.setLineDash([3,3]); ctx.strokeStyle = 'rgba(232,163,61,0.6)';
+        ctx.beginPath(); ctx.moveTo(pvs.x, pvs.y); ctx.lineTo(MOUSE.mx, MOUSE.my); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   // ---- dimension layer ----
   if (UICFG.showDims && DOC.dims && DOC.dims.length){
     ctx.save();
@@ -3085,7 +3202,24 @@ function entBBox(e){
     }
   }
   else if (e.t === 'path'){
-    tessPath(e, 0.15).forEach(function(q){ xs.push(q[0]); ys.push(q[1]); });
+    // exact: every vertex, plus each arc span's extreme points (where it crosses 0/90/180/270 deg)
+    var n = e.pts.length, last = e.closed ? n : n - 1;
+    e.pts.forEach(function(q){ xs.push(q[0]); ys.push(q[1]); });
+    for (var k = 0; k < last; k++){
+      var p0 = e.pts[k], p1 = e.pts[(k+1) % n], bg = p0[2] || 0;
+      if (Math.abs(bg) < 1e-12) continue;
+      var th = 4 * Math.atan(bg), ch = Math.hypot(p1[0]-p0[0], p1[1]-p0[1]);
+      if (ch < 1e-12) continue;
+      var rS = ch / (2 * Math.sin(th/2)), apo = rS * Math.cos(th/2);
+      var ux = (p1[0]-p0[0]) / ch, uy = (p1[1]-p0[1]) / ch;
+      var cx = (p0[0]+p1[0])/2 - uy*apo, cy = (p0[1]+p1[1])/2 + ux*apo, R = Math.abs(rS);
+      var a0 = Math.atan2(p0[1]-cy, p0[0]-cx);
+      for (var q4 = 0; q4 < 4; q4++){
+        var ang = q4 * Math.PI / 2;
+        var d = th > 0 ? angNorm(ang - a0) : angNorm(a0 - ang);   // how far along the sweep
+        if (d > 1e-12 && d < Math.abs(th) - 1e-12){ xs.push(cx + R*Math.cos(ang)); ys.push(cy + R*Math.sin(ang)); }
+      }
+    }
   }
   else entityEdges(e).forEach(function(ed){ xs.push(ed[0], ed[2]); ys.push(ed[1], ed[3]); });
   return {x0:Math.min.apply(null,xs), y0:Math.min.apply(null,ys),
@@ -3175,6 +3309,83 @@ function mirrorEnt(e, px, py, ux, uy){
     e._tess = null; e._tess2 = null;
   }
 }
+// Scale an entity about (ox,oy) by (sx,sy), in place. Proportional scaling keeps every shape
+// type as it is. Stretching one direction turns circles and arcs into ellipses, which can't stay
+// circles, so those become closed/open outlines; paths with arcs likewise. Text stays editable.
+var SCALE_NOTE = null;
+function morphEnt(e, n){                         // change an entity's type but keep its identity/flags
+  var keep = {_id:e._id, con:e.con, tp:e.tp};
+  Object.keys(e).forEach(function(k){ delete e[k]; });
+  Object.assign(e, n);
+  if (keep._id) e._id = keep._id;
+  if (keep.con) e.con = true;
+  if (keep.tp) e.tp = true;
+}
+function scaleEnt(e, ox, oy, sx, sy){
+  function X(x){ return ox + (x - ox) * sx; }
+  function Y(y){ return oy + (y - oy) * sy; }
+  var uniform = Math.abs(sx - sy) < 1e-9;
+  if (e.t === 'group'){ e.ents.forEach(function(me){ scaleEnt(me, ox, oy, sx, sy); }); return; }
+  if (e.t === 'line'){ e.x1 = X(e.x1); e.y1 = Y(e.y1); e.x2 = X(e.x2); e.y2 = Y(e.y2); return; }
+  if (e.t === 'rect'){
+    var ax = X(e.x), ay = Y(e.y), bx = X(e.x + e.w), by = Y(e.y + e.h);
+    e.x = Math.min(ax, bx); e.y = Math.min(ay, by); e.w = Math.abs(bx - ax); e.h = Math.abs(by - ay);
+    return;
+  }
+  if (e.t === 'poly'){ e.pts = e.pts.map(function(q){ return [X(q[0]), Y(q[1])]; }); return; }
+  if (e.t === 'circle'){
+    if (uniform){ e.cx = X(e.cx); e.cy = Y(e.cy); e.r *= Math.abs(sx); return; }
+    var ell = [];
+    for (var k = 0; k < 120; k++){
+      var a = k / 120 * 2 * Math.PI;
+      ell.push([X(e.cx + e.r * Math.cos(a)), Y(e.cy + e.r * Math.sin(a))]);
+    }
+    morphEnt(e, {t:'poly', pts:ell, closed:true}); SCALE_NOTE = 'ellipse';
+    return;
+  }
+  if (e.t === 'arc'){
+    if (uniform){ e.cx = X(e.cx); e.cy = Y(e.cy); e.r *= Math.abs(sx); return; }
+    var sw0 = arcSweepOf(e.a0, e.a1, e.ccw), st = Math.max(8, Math.ceil(sw0 / 0.05)), ap = [];
+    for (var j = 0; j <= st; j++){ var q = arcPtAt(e, sw0 * j / st); ap.push([X(q.x), Y(q.y)]); }
+    morphEnt(e, {t:'poly', pts:ap, closed:false}); SCALE_NOTE = 'ellipse';
+    return;
+  }
+  if (e.t === 'path'){
+    var curved = e.pts.some(function(q){ return Math.abs(q[2] || 0) > 1e-12; });
+    if (uniform || !curved){
+      e.pts = e.pts.map(function(q){ return [X(q[0]), Y(q[1]), q[2] || 0]; });  // bulge survives uniform scale
+      e._tess = null; e._tess2 = null;
+      return;
+    }
+    var tp = tessPath(e, 0.01).map(function(q){ return [X(q[0]), Y(q[1])]; });
+    morphEnt(e, {t:'poly', pts:tp, closed:!!e.closed}); SCALE_NOTE = 'ellipse';
+    return;
+  }
+  if (e.t === 'text'){
+    var tx = X(e.x), ty = Y(e.y); e.x = tx; e.y = ty;
+    if (uniform){ e.h *= Math.abs(sx); return; }
+    var r = (((e.rot || 0) % Math.PI) + Math.PI) % Math.PI;
+    if (r < 1e-6 || Math.abs(r - Math.PI) < 1e-6){          // reads left-right: h follows y, width follows x
+      e.h *= sy; e.sw = (e.sw || 1) * sx / sy;
+    } else if (Math.abs(r - Math.PI/2) < 1e-6){             // turned 90 degrees: axes swap
+      e.h *= sx; e.sw = (e.sw || 1) * sy / sx;
+    } else {                                                 // angled text can't stretch along world axes
+      e.h *= Math.sqrt(sx * sy); SCALE_NOTE = 'text';
+    }
+    return;
+  }
+}
+// flip the selection in place about its own centre
+function flipSelection(horizontal){
+  var b = selBBox();
+  if (!b) return false;
+  var cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+  pushUndo();
+  SEL.forEach(function(i){ mirrorEnt(DOC.ents[i], cx, cy, horizontal ? 0 : 1, horizontal ? 1 : 0); });
+  persist();
+  return true;
+}
+
 // run a transform over the selection; copy=true keeps originals and selects the new copies
 function applySel(copy, fn){
   if (!SEL.length) return false;
@@ -3631,7 +3842,17 @@ function updateReadout(){
   document.getElementById('fx').textContent = MOUSE.snap ? MOUSE.snap.x.toFixed(2) : '—';
   document.getElementById('fy').textContent = MOUSE.snap ? MOUSE.snap.y.toFixed(2) : '—';
   var d = '';
-  if (DRAW && MOUSE.snap){
+  if (DRAW && DRAW.stage === 'xform'){
+    if (DRAW.h.kind === 'rot') d = 'rotate ' + ((DRAW.ang || 0) * 180 / Math.PI).toFixed(1) + '\u00b0  (Shift snaps to 15\u00b0)';
+    else if (DRAW.h.kind === 'pivot') d = 'rotation centre ' + (HANDLES.pivot ? HANDLES.pivot.x.toFixed(2) + ', ' + HANDLES.pivot.y.toFixed(2) : '');
+    else {
+      var nb = selBBox(), sxp = (DRAW.sx || 1) * 100, syp = (DRAW.sy || 1) * 100;
+      d = 'W ' + (nb.x1 - nb.x0).toFixed(2) + '  H ' + (nb.y1 - nb.y0).toFixed(2) + '  ' +
+          (Math.abs(sxp - syp) < 1e-6 ? sxp.toFixed(1) + '%' : sxp.toFixed(1) + '% \u00d7 ' + syp.toFixed(1) + '%') +
+          (DRAW.h.kind === 'corner' ? '  (Shift stretches freely, Alt scales from centre)' : '');
+    }
+  }
+  else if (DRAW && MOUSE.snap){
     if (TOOL==='line' && DRAW.stage===1){
       var dx=MOUSE.snap.x-DRAW.x, dy=MOUSE.snap.y-DRAW.y;
       d = 'Δ ' + dx.toFixed(2) + ', ' + dy.toFixed(2) + '  L ' + Math.hypot(dx,dy).toFixed(2);
@@ -3862,6 +4083,8 @@ var ICON = {
  offs:'<svg viewBox="0 0 18 18"><rect x="6" y="6" width="6" height="6"/><rect x="2.5" y="2.5" width="13" height="13" opacity=".5" stroke-dasharray="2.4 2"/></svg>',
  join:'<svg viewBox="0 0 18 18"><path d="M3 14 L8 9"/><path d="M10 7 L15 3"/><circle cx="9" cy="8" r="2.2" opacity=".6"/></svg>',
  dim:'<svg viewBox="0 0 18 18"><path d="M2 5 V13 M16 5 V13"/><path d="M2 9 H16"/><path d="M4.5 7 L2 9 L4.5 11 M13.5 7 L16 9 L13.5 11"/></svg>',
+ flipH:'<svg viewBox="0 0 18 18"><path d="M9 2 V16" stroke-dasharray="2 2"/><path d="M7 4 L2 13 H7 Z"/><path d="M11 4 L16 13 H11 Z" opacity=".5"/></svg>',
+ flipV:'<svg viewBox="0 0 18 18"><path d="M2 9 H16" stroke-dasharray="2 2"/><path d="M4 7 L13 2 V7 Z"/><path d="M4 11 L13 16 V11 Z" opacity=".5"/></svg>',
  text:'<svg viewBox="0 0 18 18"><path d="M3.5 15 L9 3 L14.5 15"/><path d="M5.6 10.6 H12.4"/></svg>',
  curves:'<svg viewBox="0 0 18 18"><path d="M3 15 L7 4 L11 15"/><path d="M4.6 11 H9.4"/><rect x="1.5" y="13.5" width="3" height="3"/><rect x="5.5" y="2.5" width="3" height="3"/><rect x="9.5" y="13.5" width="3" height="3"/><path d="M13 5 H16.5 M14.75 3.2 V6.8" opacity=".6"/></svg>',
  node:'<svg viewBox="0 0 18 18"><path d="M3 14 L8 6 L12 10 L15.5 4"/><rect x="1.4" y="12.4" width="3.2" height="3.2"/><rect x="6.4" y="4.4" width="3.2" height="3.2"/><rect x="10.4" y="8.4" width="3.2" height="3.2"/><rect x="13.9" y="2.4" width="3.2" height="3.2"/></svg>',
@@ -3888,6 +4111,8 @@ var PANEL_BTNS = {
  arc:   {tool:'arc', icon:'arc', title:'Arc (A) \u2014 start point, end point, then bow it with the mouse (3-point) or type a radius; + bows left of start\u2192end, \u2212 right'},
  poly:  {tool:'poly', icon:'poly', title:'Polyline (P) \u2014 click points, Enter ends, click start to close'},
  textT: {tool:'text', icon:'text', title:'Text (K) \u2014 click where the text starts; double-click text later to edit it'},
+ flipHBtn:{id:'flipHBtn', icon:'flipH', title:'Flip horizontal (Shift+H) \u2014 mirror the selection left to right, in place'},
+ flipVBtn:{id:'flipVBtn', icon:'flipV', title:'Flip vertical (Shift+V) \u2014 mirror the selection top to bottom, in place'},
  curvesBtn:{id:'curvesBtn', icon:'curves', title:'Convert to curves \u2014 turn selected text into ordinary shapes you can trim, offset and cut'},
  offsetT:{tool:'offset', icon:'offs', title:'Offset (S) \u2014 select or click shapes, then type the distance: + outward, \u2212 inward (open shapes: + is left of travel)'},
  dimT:{tool:'dim', icon:'dim', title:'Dimension (I) \u2014 click one shape for its size, or two shapes for the distance between them. Dimensions stay on the drawing and update themselves; click a value to change it and move the geometry.'},
@@ -3915,7 +4140,7 @@ var PANEL_BTNS = {
 var PANEL_GROUPS = [
  {id:'file',   label:'File',           btns:['newBtn','saveBtn','loadBtn']},
  {id:'create', label:'Create Vectors', btns:['select','line','rect','circle','arc','poly','textT']},
- {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','nodeT','dimT','copyT','mirrorT','rotateT','arrayT','groupBtn','ungroupBtn','joinBtn','explodeBtn','curvesBtn']},
+ {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','nodeT','dimT','copyT','mirrorT','flipHBtn','flipVBtn','rotateT','arrayT','groupBtn','ungroupBtn','joinBtn','explodeBtn','curvesBtn']},
  {id:'guides', label:'Guides',         btns:['guide','clearGuides']},
  {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']}
  /* D1.2 adds: {id:'edit', label:'Edit Vectors', btns:['fillet','trim','extend','offset',...]} */
@@ -4223,6 +4448,15 @@ function wire(){
     rd.readAsArrayBuffer(f);
   });
 
+  // ---- flip in place ----
+  function flipBtn(horizontal){
+    if (!SEL.length){ toast('info', 'Select something first', 'Flip mirrors the selected shapes in place. Select them, then flip.'); return; }
+    if (flipSelection(horizontal)) draw();
+  }
+  document.getElementById('flipHBtn').addEventListener('click', function(){ flipBtn(true); });
+  document.getElementById('flipVBtn').addEventListener('click', function(){ flipBtn(false); });
+  flipBtnRef = flipBtn;
+
   // ---- convert selected text to curves ----
   document.getElementById('curvesBtn').addEventListener('click', function(){
     var n = convertTextsToCurves(SEL.slice());
@@ -4382,6 +4616,17 @@ function wire(){
         }
       }
     }
+    // select tool: grab a transform handle
+    if (TOOL === 'select' && SEL.length){
+      var hh = handleAt(e.clientX - r.left, e.clientY - r.top);
+      if (hh){
+        var b0 = selBBox();
+        DRAW = {stage:'xform', h:hh, b0:b0, start:{x:w.x, y:w.y}, pushed:false,
+                pivot: HANDLES.pivot || {x:(b0.x0+b0.x1)/2, y:(b0.y0+b0.y1)/2},
+                snaps: SEL.map(function(si){ return snapJSON(DOC.ents[si]); })};
+        draw(); return;
+      }
+    }
     toolClick(w, MOUSE.snap || resolveSnap(w));
   });
   cv.addEventListener('pointermove', function(e){
@@ -4395,6 +4640,19 @@ function wire(){
     var w = s2w(MOUSE.mx, MOUSE.my);
     MOUSE.snap = resolveSnap(w);
     toolMgrHover(w);   // edit tools compute check/X status for the geometry under the cursor
+    // transform handle drag
+    if (TOOL === 'select' && DRAW && DRAW.stage === 'xform'){
+      if (e.buttons & 1){
+        var pw = (MOUSE.snap && MOUSE.snap.k !== 'grid') ? MOUSE.snap : w;   // snap to shapes, not the grid
+        xformApply(DRAW, pw, e.altKey, e.shiftKey);
+      }
+      updateReadout(); draw(); return;
+    }
+    // cursor shows what a handle will do
+    if (TOOL === 'select' && !(e.buttons & 1)){
+      var hov = handleAt(MOUSE.mx, MOUSE.my);
+      cv.style.cursor = hov ? hov.cur : '';
+    } else if (TOOL !== 'select' && cv.style.cursor) cv.style.cursor = '';
     // marquee
     if (TOOL==='select' && DRAW && DRAW.stage==='marq' && (e.buttons & 1)){
       DRAW.ex = w.x; DRAW.ey = w.y;
@@ -4428,7 +4686,26 @@ function wire(){
     if (TOOL === 'node' && NODE && NODE.drag !== null && NODE.drag !== undefined){
       NODE.drag = null; NODE.pushed = false; draw();
     }
-    if (TOOL==='select' && DRAW && DRAW.stage==='drag') DRAW = null;
+    if (TOOL === 'select' && DRAW && DRAW.stage === 'xform'){
+      var fin = DRAW; DRAW = null;
+      if (fin.h.kind !== 'pivot' && fin.h.kind !== 'rot') HANDLES.pivot = null;
+      // released where it started? then nothing changed: drop the undo step
+      if (fin.pushed && SEL.every(function(si, k){ return snapJSON(DOC.ents[si]) === fin.snaps[k]; })){
+        UNDO.pop(); fin.pushed = false;
+      }
+      if (fin.pushed) persist();
+      if (fin.note === 'ellipse')
+        toast('info', 'Circles became ellipses', 'Stretching in one direction turns circles and arcs into ellipse outlines. Drag a corner without Shift to keep them round.');
+      else if (fin.note === 'text')
+        toast('info', 'Angled text scaled evenly', 'Text at an angle can only be scaled evenly. Convert it to curves first to stretch it.');
+      draw(); return;
+    }
+    if (TOOL==='select' && DRAW && DRAW.stage==='drag'){
+      // clicking a shape that was already selected, without moving, switches scale <-> rotate
+      if (!DRAW.moved && DRAW.wasSel) HANDLES.mode = HANDLES.mode === 'scale' ? 'rotate' : 'scale';
+      else if (DRAW.moved) HANDLES.pivot = null;
+      DRAW = null; draw();
+    }
     else if (TOOL==='select' && DRAW && DRAW.stage==='marq'){
       var m = DRAW; DRAW = null;
       var a = w2s(m.sx, m.sy), b = w2s(m.ex, m.ey);
@@ -4516,7 +4793,12 @@ function wire(){
     }
     if (inField) return;   // everything below is canvas-context only
     if (e.key === 'Escape'){
-      if (DRAW){ DRAW = null; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); }
+      if (DRAW && DRAW.stage === 'xform'){
+        SEL.forEach(function(si, k){ restoreInto(DOC.ents[si], DRAW.snaps[k]); });
+        if (DRAW.pushed) UNDO.pop();
+        DRAW = null;
+      }
+      else if (DRAW){ DRAW = null; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); }
       else if (NODE){ NODE = null; stagePrompt('node0'); }     // close an open node-edit shape
       else if (TOOL !== 'select'){ setTool('select'); }
       else if (SEL.length){ SEL = []; }
@@ -4576,6 +4858,11 @@ function wire(){
       pushUndo();
       SEL.forEach(function(si){ moveEntity(DOC.ents[si], dx, dy); });
       persist(); draw(); return;
+    }
+    // Shift+H / Shift+V flip the selection (Select tool only, so mirror's typed H/V stay data)
+    if (e.shiftKey && !e.ctrlKey && !e.altKey && TOOL === 'select' && SEL.length &&
+        (e.key === 'H' || e.key === 'h' || e.key === 'V' || e.key === 'v')){
+      e.preventDefault(); flipBtnRef(e.key.toLowerCase() === 'h'); return;
     }
     // construction toggle works whenever something is selected, whatever the active tool
     if ((e.key === 'x' || e.key === 'X') && SEL.length && !e.ctrlKey){
