@@ -27,8 +27,8 @@
   input[type=number]{width:76px}
   select{background:var(--panel-deep);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:5px 8px;font-size:13px;font-family:var(--sans)}
 
-  #app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:auto 1fr;height:100vh}
-  header{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+  #app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:auto 1fr auto;height:100vh}
+  header{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
   header .brand{font-weight:700;font-size:17px}
   header .brand span{color:var(--amber)}
   #openControl{color:var(--amber);text-decoration:none;font-size:13px;font-weight:600;padding:5px 10px;border:1px solid var(--line);border-radius:5px;margin-right:8px}
@@ -127,6 +127,20 @@
   #toolPanel button.tool{width:100%;height:36px}
 
   #canvasWrap{grid-row:2;grid-column:2;position:relative;min-width:0;min-height:0}
+  #tpPanel{grid-row:2;grid-column:3;width:292px;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line)}
+  #tpPanel[hidden]{display:none}
+  #tpPanel .tpHead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+  #tpPanel .tpHead b{font-size:13.5px} #tpPanel .tpHead span{flex:1;font-size:12px;color:var(--muted)}
+  #tpPanel .tpNote{font-size:11.5px;color:var(--muted);line-height:1.45;margin:8px 12px}
+  .tpCard{margin:8px 10px;padding:9px 10px;border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:5px;background:rgba(255,255,255,.015)}
+  .tpName{font-weight:600;font-size:13px;color:var(--ink);display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .tpType{font-weight:400;font-size:11.5px;color:var(--amber)}
+  .tpTool{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.4}
+  .tpSet{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:7px 0 0;font-size:12px}
+  .tpSet dt{color:var(--muted)} .tpSet dd{margin:0;color:var(--ink);font-family:var(--mono);font-size:11.5px}
+  #tpToggle{font-size:12.5px}
+  #tpToggle[hidden]{display:none}
+  #tpToggle[aria-expanded=true]{border-color:var(--amber)}
   #cv{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
 
   #promptBar{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;display:none;align-items:center;gap:8px;background:rgba(23,28,34,.95);border:1px solid var(--amber);border-radius:6px;padding:8px 12px;z-index:5}
@@ -143,7 +157,7 @@
   #impPanel .row{display:flex;align-items:center;gap:8px;margin-bottom:9px}
   #impPanel input[type=checkbox],#impPanel input[type=radio]{accent-color:var(--amber);width:auto}
   #impPanel .note{color:var(--faint);font-size:12px;line-height:1.5;margin-top:4px}
-  footer{grid-column:1/3;display:flex;align-items:center;gap:16px;padding:8px 16px;background:var(--panel);border-top:1px solid var(--line);font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+  footer{grid-column:1/-1;display:flex;align-items:center;gap:16px;padding:8px 16px;background:var(--panel);border-top:1px solid var(--line);font-family:var(--mono);font-size:12.5px;color:var(--muted)}
   footer b{color:var(--ink);font-weight:500}
   #hint{color:var(--faint);font-family:var(--sans)}
 </style>
@@ -155,6 +169,7 @@
     <div class="sub" id="verSub">precision 2D sketcher</div>
     <div class="spacer"></div>
     <a id="openControl" href="index.html" target="_blank" rel="noopener" title="Open 454 Control (the machine sender) in a new tab">454 Control ↗</a>
+    <button id="tpToggle" hidden aria-expanded="false" aria-controls="tpPanel" title="Show or hide the toolpaths found in the VCarve project">VCarve toolpaths</button>
     <button id="settingsBtn" title="Settings — stock size, display colors">⚙ Settings</button>
     <input type="file" id="loadFile" accept=".json,.crv,.dxf" hidden>
   </header>
@@ -241,6 +256,12 @@
 
   <div id="toolPanel"></div>
 
+  <aside id="tpPanel" hidden aria-label="VCarve toolpaths">
+    <div class="tpHead"><b>VCarve toolpaths</b><span id="tpCount"></span><button id="tpClose" title="Hide this panel">✕</button></div>
+    <p class="tpNote">Read from the VCarve project, in the order VCarve lists them. They show how the job was set up; 454 Design can&rsquo;t cut them yet, and editing the drawing doesn&rsquo;t update them.</p>
+    <div id="tpList"></div>
+  </aside>
+
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
     <div id="promptHint"></div>
@@ -293,7 +314,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.41.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.42.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -1904,6 +1925,150 @@ function oleParse(buf){
   }
   return {stream: stream};
 }
+/* ---- VCarve toolpaths (read-only) ----
+   The 'ToolpathData' stream stores each toolpath's settings as NAMED values
+   (_ppdCutDepth, _dpdPeckDrill ...): a UTF-16 name after FF FE FF <len>, then a
+   type tag (0 number, 1 whole number, 2 on/off, 3 text) and the value. Each
+   toolpath is preceded by its tool: spindle speed, tool number, then the name. */
+function vcDecode(bytes){
+  var n = bytes.length, dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  var kv = [], tools = [];
+  for (var i = 0; i + 8 < n; i++){
+    if (bytes[i] !== 0xff || bytes[i+1] !== 0xfe || bytes[i+2] !== 0xff) continue;
+    var L = bytes[i+3], p = i + 4;
+    if (L < 2 || p + 2*L + 5 > n) continue;
+    var name = '', ok = true;
+    for (var k = 0; k < L; k++){
+      var c = bytes[p + 2*k];
+      if (bytes[p + 2*k + 1] !== 0 || c < 0x20 || c > 0x7e){ ok = false; break; }
+      name += String.fromCharCode(c);
+    }
+    if (!ok) continue;
+    var q = p + 2*L, tag = dv.getUint32(q, true), v;
+    q += 4;
+    if (tag === 0 && q + 8 <= n) v = dv.getFloat64(q, true);
+    else if (tag === 1 && q + 4 <= n) v = dv.getInt32(q, true);
+    else if (tag === 2) v = !!bytes[q];
+    else if (tag === 3 && bytes[q] === 0xff && bytes[q+1] === 0xfe && bytes[q+2] === 0xff){
+      var sl = bytes[q+3]; v = '';
+      for (var k2 = 0; k2 < sl && q + 5 + 2*k2 < n; k2++) v += String.fromCharCode(bytes[q+4+2*k2] | (bytes[q+5+2*k2] << 8));
+    }
+    else continue;
+    kv.push({at:i, k:name, v:v});
+    i = p + 2*L - 1;
+  }
+  // tool records: spindle speed, tool number, length, then the name (Latin-1, zero-terminated)
+  for (var j = 0; j + 12 < n; j++){
+    var L2 = dv.getUint32(j + 8, true);
+    if (L2 < 4 || L2 > 120) continue;
+    var rpm = dv.getInt32(j, true), tn = dv.getUint32(j + 4, true);
+    if (rpm < 1000 || rpm > 60000 || tn < 1 || tn > 999) continue;
+    var s0 = j + 12;
+    if (s0 + L2 > n || bytes[s0 + L2 - 1] !== 0) continue;
+    var nm = '', good = true;
+    for (var t = 0; t < L2 - 1; t++){
+      var b = bytes[s0 + t];
+      if (!((b >= 0x20 && b <= 0x7e) || b >= 0xa0)){ good = false; break; }
+      nm += String.fromCharCode(b);
+    }
+    if (!good || nm.length < 3) continue;
+    tools.push({at:j, num:tn, rpm:rpm, name:nm});
+    j = s0 + L2 - 1;
+  }
+  return {kv:kv, tools:tools};
+}
+function vcToolpathsFrom(bytes){
+  var d = vcDecode(bytes), kv = d.kv, tools = d.tools, groups = [];
+  kv.forEach(function(e, idx){
+    if (!/ToolpathName$/.test(e.k)) return;
+    var name = String(e.v), pre = e.k.replace(/ToolpathName$/, ''), last = groups[groups.length - 1];
+    if (last && last.name === name){ if (last.prefixes.indexOf(pre) < 0) last.prefixes.push(pre); return; }
+    groups.push({name:name, at:e.at, idx:idx, prefixes:[pre]});   // same name again = parts of one toolpath
+  });
+  var TYPES = [['_chpd','Chamfer'], ['_vcpd','V-Carve'], ['_dpd','Drilling'], ['_pkpd','Pocket'], ['_ppd','Profile']];
+  return groups.map(function(g, gi){
+    var stop = gi + 1 < groups.length ? groups[gi + 1].idx - 5 : kv.length;
+    var set = {};
+    for (var a = Math.max(0, g.idx - 5); a < stop; a++){ if (!(kv[a].k in set)) set[kv[a].k] = kv[a].v; }
+    var type = 'Toolpath';
+    for (var ti = 0; ti < TYPES.length; ti++) if (g.prefixes.indexOf(TYPES[ti][0]) >= 0){ type = TYPES[ti][1]; break; }
+    // VCarve also writes the type as text; trust it where it exists
+    var named = typeof set.ToolpathType === 'string' ? set.ToolpathType : '';
+    if (type === 'Toolpath' && /pocket/i.test(named)) type = 'Pocket';
+    else if (type === 'Toolpath' && /drill/i.test(named)) type = 'Drilling';
+    else if (type === 'Toolpath' && /profile/i.test(named)) type = 'Profile';
+    var tool = null;
+    for (var tj = tools.length - 1; tj >= 0; tj--) if (tools[tj].at < g.at){ tool = tools[tj]; break; }
+    return {name:g.name, type:type, tool: tool ? {num:tool.num, name:tool.name, rpm:tool.rpm} : null, set:set};
+  });
+}
+
+function renderToolpathPanel(){
+  var list = DOC.vcToolpaths || [], pan = document.getElementById('tpPanel'), btn = document.getElementById('tpToggle');
+  if (!pan) return;
+  btn.hidden = !list.length;
+  btn.textContent = 'VCarve toolpaths (' + list.length + ')';
+  btn.setAttribute('aria-expanded', list.length && UICFG.tpPanel ? 'true' : 'false');
+  var show = !!(list.length && UICFG.tpPanel);
+  if (pan.hidden === show) pan.hidden = !show;          // the canvas's size observer redraws it to fit
+  if (!show) return;
+  document.getElementById('tpCount').textContent = list.length + (list.length === 1 ? ' toolpath' : ' toolpaths');
+  var box = document.getElementById('tpList');
+  box.innerHTML = '';
+  list.forEach(function(tp){
+    var s = tp.set || {}, rows = [];
+    function pre(){ return tp.type === 'Profile' ? '_ppd' : tp.type === 'Drilling' ? '_dpd' : tp.type === 'Chamfer' ? '_chpd' : tp.type === 'V-Carve' ? '_vcpd' : '_pkpd'; }
+    var P = pre(), inch = s[P + 'InMM'] === false;
+    function len(v){ return typeof v === 'number' ? (+v.toFixed(inch ? 4 : 3)) + (inch ? ' in' : ' mm') : '\u2014'; }
+    function row(k, v){ rows.push([k, v]); }
+    if (tp.type === 'Profile'){
+      var side = s._ppdProfileType === 0 ? 'Outside' : s._ppdProfileType === 1 ? 'Inside' : (s._ppdProfileType === undefined ? '\u2014' : 'code ' + s._ppdProfileType);
+      row('Side', side);
+      row('Cut depth', len(s._ppdCutDepth));
+      if (s._ppdStartDepth) row('Start depth', len(s._ppdStartDepth));
+      if (s._ppdAllowance) row('Allowance', len(s._ppdAllowance));
+      row('Tabs', s._ppdUseTabs ? len(s._ppdTabLength) + ' long \u00d7 ' + len(s._ppdTabThickness) + ' thick' : 'none');
+      if (s._mcrdDoRamping !== undefined) row('Ramps', s._mcrdDoRamping ? 'on' : 'off');
+    } else if (tp.type === 'Drilling'){
+      row('Cut depth', len(s._dpdCutDepth));
+      if (s._dpdStartDepth) row('Start depth', len(s._dpdStartDepth));
+      row('Peck drilling', s._dpdPeckDrill ? 'yes' : 'no');
+      if (s._dpdRetractGap !== undefined) row('Retract gap', len(s._dpdRetractGap));
+      if (s._dpdUseDwell) row('Dwell', s._dpdDwellTime + ' s');
+    } else if (tp.type === 'Chamfer'){
+      if (s._chpdAngle !== undefined) row('Angle', s._chpdAngle + '\u00b0');
+      row('Chamfer depth', len(s._chpdChamferDepth));
+      if (s._chpdInside !== undefined) row('Side', s._chpdInside ? 'Inside' : 'Outside');
+    } else if (tp.type === 'V-Carve'){
+      row('Flat depth', s._vcpdDoFlatBottom ? len(s._vcpdFlatDepth) : 'none');
+      if (s._vcpdStartDepth) row('Start depth', len(s._vcpdStartDepth));
+    } else if (tp.type === 'Pocket'){
+      var pk = s._pkpdCutDepth !== undefined ? '_pkpd' : '_mtpkpd';     // some pockets store under a second prefix
+      inch = s[pk + 'InMM'] === false;
+      row('Cut depth', len(s[pk + 'CutDepth']));
+      if (s[pk + 'StartDepth']) row('Start depth', len(s[pk + 'StartDepth']));
+      row('Strategy', s[pk + 'DoRaster'] ? 'Raster' : 'Offset');
+    }
+    var card = document.createElement('div'); card.className = 'tpCard';
+    var h = document.createElement('div'); h.className = 'tpName'; h.textContent = tp.name;
+    var ty = document.createElement('span'); ty.className = 'tpType'; ty.textContent = tp.type === 'Toolpath' ? 'type not recognized yet' : tp.type;
+    h.appendChild(ty); card.appendChild(h);
+    var tl = document.createElement('div'); tl.className = 'tpTool';
+    tl.textContent = tp.tool ? 'T' + tp.tool.num + ' \u00b7 ' + tp.tool.name + ' \u00b7 ' + tp.tool.rpm + ' rpm' : 'Tool not found in the file';
+    card.appendChild(tl);
+    if (rows.length){
+      var dl = document.createElement('dl'); dl.className = 'tpSet';
+      rows.forEach(function(r){
+        var dt = document.createElement('dt'); dt.textContent = r[0];
+        var dd = document.createElement('dd'); dd.textContent = r[1];
+        dl.appendChild(dt); dl.appendChild(dd);
+      });
+      card.appendChild(dl);
+    }
+    box.appendChild(card);
+  });
+}
+
 function crvExtract(buf){
   var ole = oleParse(buf);
   if (!ole) return null;
@@ -1959,7 +2124,9 @@ function crvExtract(buf){
     }
     i++;
   }
-  return {stockW: stockW, stockH: stockH, contours: contours, preview: preview};
+  var toolpaths = [];
+  try{ var td = ole.stream('ToolpathData'); if (td) toolpaths = vcToolpathsFrom(td); }catch(e){}   // never block the import
+  return {stockW: stockW, stockH: stockH, contours: contours, preview: preview, toolpaths: toolpaths};
 }
 function crvToDoc(ex, scale){
   var ents = [];
@@ -4946,6 +5113,7 @@ function uiCfgLoad(){
       if (c.nestGap >= 0) UICFG.nestGap = c.nestGap;
       if (c.nestMargin >= 0) UICFG.nestMargin = c.nestMargin;
       if (c.nestRot) UICFG.nestRot = c.nestRot;
+      if (typeof c.tpPanel === 'boolean') UICFG.tpPanel = c.tpPanel;
       if (c.lastTextH > 0) UICFG.lastTextH = c.lastTextH;
     }
   }catch(e){}
@@ -5127,6 +5295,8 @@ function wirePanel(){
     DOC.ents = [];
     DOC.guides = [];
     DOC.dims = [];
+    DOC.vcToolpaths = [];
+    renderToolpathPanel();
     SEL.length = 0;
     setTool('select');
     persist();
@@ -5188,6 +5358,9 @@ function wire(){
   }
   function closeSettings(){ settingsModal.hidden = true; }
   document.getElementById('settingsBtn').addEventListener('click', openSettings);
+  document.getElementById('tpToggle').addEventListener('click', function(){ UICFG.tpPanel = !UICFG.tpPanel; uiCfgSave(); renderToolpathPanel(); });
+  document.getElementById('tpClose').addEventListener('click', function(){ UICFG.tpPanel = false; uiCfgSave(); renderToolpathPanel(); });
+  renderToolpathPanel();
   // ---- nesting dialog ----
   document.getElementById('nestCancel').addEventListener('click', closeNestDialog);
   document.getElementById('nestGo').addEventListener('click', runNestDialog);
@@ -5326,9 +5499,11 @@ function wire(){
     var docD = crvToDoc({stockW: ex.stockW, stockH: ex.stockH, contours: useD ? ex.contours : []}, scale);
     var docP = crvToDoc({stockW: ex.stockW, stockH: ex.stockH, contours: useP ? ex.preview : []}, scale);
     docP.ents.forEach(function(en){ en.tp = true; });
-    DOC = {stock: docD.stock, ents: docD.ents.concat(docP.ents), guides: []};
+    DOC = {stock: docD.stock, ents: docD.ents.concat(docP.ents), guides: [], dims: [], vcToolpaths: ex.toolpaths || []};
     syncStockUI(); persist(); fit();
     impClose();
+    if (DOC.vcToolpaths.length){ UICFG.tpPanel = true; uiCfgSave(); }
+    renderToolpathPanel();
   });
   window.addEventListener('keydown', function(e){
     if (e.code === 'Escape' && !document.getElementById('impModal').hidden){
