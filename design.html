@@ -179,7 +179,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.30.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.32.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -759,10 +759,12 @@ function toolCommitText(txt){
   if (DRAW && DRAW.stage === 'dimEdit2'){
     var ea = DOC.ents[DRAW.a], eb = DOC.ents[DRAW.b];
     if (!ea || !eb){ DRAW = null; hidePrompt(); return; }
-    var vv = parseFloat(txt);
+    var rawT = txt.trim();
+    var wantEdge = /^[eE]/.test(rawT) || /[eE]$/.test(rawT);
+    var vv = parseFloat(rawT.replace(/[eE]/g, ''));
     if (isNaN(vv) || vv <= 0) return;
     pushUndo();
-    if (relApply(ea, eb, vv)){ DRAW = null; hidePrompt(); persist(); draw(); updateReadout(); }
+    if (relApply(ea, eb, vv, wantEdge)){ DRAW = null; hidePrompt(); persist(); draw(); updateReadout(); }
     else UNDO.pop();
     return;
   }
@@ -3035,6 +3037,10 @@ function repPoint(e){
   if (e.t === 'rect')   return {x:e.x+e.w/2, y:e.y+e.h/2};
   if (e.t === 'poly')   return {x:e.pts[0][0], y:e.pts[0][1]};
   if (e.t === 'path')   return {x:e.pts[0][0], y:e.pts[0][1]};
+  if (e.t === 'group'){
+    var b = entBBox(e);
+    return {x:(b.x0+b.x1)/2, y:(b.y0+b.y1)/2};
+  }
   return {x:0,y:0};
 }
 function segNorm(x1,y1,x2,y2){
@@ -3051,11 +3057,44 @@ function nearestRectEdge(e, hint){
   });
   return segNorm(best.ed[0],best.ed[1],best.ed[2],best.ed[3]);
 }
+// nearest straight edge of any multi-segment shape (poly, path, rect, or group) to a hint point
+function nearestEdgeOf(e, hint){
+  var best = null;
+  function consider(segs){
+    segs.forEach(function(ed){
+      var d = distToSeg(hint.x, hint.y, ed[0], ed[1], ed[2], ed[3]);
+      if (!best || d < best.d) best = {d:d, ed:ed};
+    });
+  }
+  if (e.t === 'group'){
+    e.ents.forEach(function(me){
+      if (me.t === 'circle' || me.t === 'arc'){
+        // approximate a curved member by the chord nearest the hint
+        var tp = me.t === 'circle'
+          ? (function(){ var o=[]; for (var k=0;k<36;k++){ var a=k/36*2*Math.PI, a2=(k+1)/36*2*Math.PI;
+              o.push([me.cx+me.r*Math.cos(a), me.cy+me.r*Math.sin(a), me.cx+me.r*Math.cos(a2), me.cy+me.r*Math.sin(a2)]); } return o; })()
+          : (function(){ var o=[], sw=arcSweepOf(me.a0,me.a1,me.ccw), st=24;
+              for (var k=0;k<st;k++){ var q1=arcPtAt(me, sw*k/st), q2=arcPtAt(me, sw*(k+1)/st);
+                o.push([q1.x,q1.y,q2.x,q2.y]); } return o; })();
+        consider(tp);
+      } else consider(entityEdges(me));
+    });
+  } else if (e.t === 'path'){
+    var tp2 = tessPath(e, 0.2), segs = [];
+    for (var i = 0; i < tp2.length-1; i++) segs.push([tp2[i][0], tp2[i][1], tp2[i+1][0], tp2[i+1][1]]);
+    if (e.closed && tp2.length > 1) segs.push([tp2[tp2.length-1][0], tp2[tp2.length-1][1], tp2[0][0], tp2[0][1]]);
+    consider(segs);
+  } else consider(entityEdges(e));
+  return best ? segNorm(best.ed[0], best.ed[1], best.ed[2], best.ed[3]) : null;
+}
 function refGeom(e, other){
   if (e.t === 'circle') return {pt:{x:e.cx, y:e.cy}};
   if (e.t === 'arc')    return {pt:{x:e.cx, y:e.cy}};
   if (e.t === 'line')   return {ln:lineNorm(e)};
-  if (e.t === 'rect')   return {ln:nearestRectEdge(e, repPoint(other))};
+  if (e.t === 'rect' || e.t === 'poly' || e.t === 'path' || e.t === 'group'){
+    var ln = nearestEdgeOf(e, repPoint(other));
+    return ln ? {ln:ln} : null;
+  }
   return null;
 }
 function sd(n, px, py){ return n.a*px + n.b*py - n.c; }
@@ -3076,15 +3115,28 @@ function relInfo(e1, e2){
   if (ang >= 0.5) return {kind:'angle', cur:ang};
   return {kind:'dist', mode:'ll', cur:Math.abs(sd(g1.ln, g2.ln.x1, g2.ln.y1))};
 }
+// radius of whichever of the pair is a circle/arc (0 if neither) — used for edge distances
+function relRadius(e1, e2){
+  var r = 0;
+  [e1, e2].forEach(function(e){ if (e && (e.t === 'circle' || e.t === 'arc')) r = e.r; });
+  return r;
+}
 function relDims(e1, e2){
   var r = relInfo(e1, e2);
   if (r.kind === 'angle') return 'not parallel  \u2220 ' + r.cur.toFixed(2) + '\u00b0';
   if (r.kind === 'unsupported') return 'no dimension for this pair yet';
+  var rad = relRadius(e1, e2);
+  if (rad > 0)
+    return 'centre ' + r.cur.toFixed(2) + '  \u00b7 edge ' + Math.max(0, r.cur - rad).toFixed(2);
   return 'dist ' + r.cur.toFixed(2);
 }
-function relApply(e1, e2, v){
+function relApply(e1, e2, v, toEdge){
   var r = relInfo(e1, e2);
   if (r.kind !== 'dist' || v <= 0) return false;
+  if (toEdge){
+    var rad = relRadius(e1, e2);
+    if (rad > 0) v = v + rad;     // edge distance -> centre distance
+  }
   var g1 = refGeom(e1, e2), g2 = refGeom(e2, e1);
   var dx = 0, dy = 0;
   if (r.mode === 'pp'){
@@ -3730,7 +3782,12 @@ function wire(){
         return;
       }
       DRAW = {stage:'dimEdit2', a:SEL[0], b:SEL[1]};
-      showPrompt('Distance \u2014 current ' + r2.cur.toFixed(2) + ' mm; type new (the second-selected entity moves)', r2.cur.toFixed(2), true);
+      var _pr = relInfo(DOC.ents[SEL[0]], DOC.ents[SEL[1]]);
+      var _rad = relRadius(DOC.ents[SEL[0]], DOC.ents[SEL[1]]);
+      showPrompt(_rad > 0
+        ? 'Distance \u2014 type a number for CENTRE distance, or prefix E for EDGE (e.g. "E5" = edge 5\u00a0mm away). The second-selected item moves.'
+        : 'Distance between the two \u2014 type the new value; the second-selected item moves',
+        _pr && _pr.cur ? _pr.cur.toFixed(2) : '', true);
       return;
     }
     if (e.key.toLowerCase() === 'd' && TOOL === 'select' && SEL.length === 1 && !e.ctrlKey){
