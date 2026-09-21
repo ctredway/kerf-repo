@@ -179,7 +179,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.26.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.28.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -348,6 +348,23 @@ function pickEntity(w){
         d = Math.min(d, distToSeg(w.x, w.y, q1[0], q1[1], q2[0], q2[1]));
       }
     }
+    else if (e.t==='group'){
+      // a group is hit when any of its members is hit
+      e.ents.forEach(function(me){
+        var md = 1e9;
+        if (me.t==='circle') md = Math.abs(Math.hypot(w.x-me.cx, w.y-me.cy) - me.r);
+        else if (me.t==='arc') md = arcHitDist(me, w);
+        else if (me.t==='path'){
+          var mt = tessPath(me, 0.25);
+          for (var mk = 0; mk < mt.length - (me.closed ? 0 : 1); mk++){
+            var r1 = mt[mk], r2 = mt[(mk+1) % mt.length];
+            md = Math.min(md, distToSeg(w.x, w.y, r1[0], r1[1], r2[0], r2[1]));
+          }
+        }
+        else entityEdges(me).forEach(function(ed){ md = Math.min(md, distToSeg(w.x,w.y, ed[0],ed[1],ed[2],ed[3])); });
+        d = Math.min(d, md);
+      });
+    }
     else entityEdges(e).forEach(function(ed){ d = Math.min(d, distToSeg(w.x,w.y, ed[0],ed[1],ed[2],ed[3])); });
     if (d < tol && (!best || d < best.d)) best = {i:i, d:d};
   });
@@ -495,6 +512,7 @@ function hoverExtend(w){
   return {action:'none', hint:'extend needs a line or arc'};
 }
 var HOVER = null; // last computed hover status, for cursor feedback in draw()
+var doGroupSelectionRef = function(){}, doUngroupSelectionRef = function(){};
 
 function toolMgrEnter(t){
   var desc = TOOLS[t] || TOOLS.select;
@@ -1432,6 +1450,23 @@ function draw(){
       var ca=w2s(e.cx,e.cy);
       ctx.arc(ca.x, ca.y, e.r*VIEW.scale, -e.a0, -e.a1, e.ccw); // screen Y-flip mirrors handedness
     }
+    else if (e.t==='group'){
+      // draw each member's outline into the same path, so the group strokes as one unit
+      e.ents.forEach(function(me){
+        if (me.t==='line'){ var g1=w2s(me.x1,me.y1), g2=w2s(me.x2,me.y2); ctx.moveTo(g1.x,g1.y); ctx.lineTo(g2.x,g2.y); }
+        else if (me.t==='rect'){ var gr1=w2s(me.x,me.y+me.h), gr2=w2s(me.x+me.w,me.y); ctx.rect(gr1.x,gr1.y, gr2.x-gr1.x, gr2.y-gr1.y); }
+        else if (me.t==='circle'){ var gc=w2s(me.cx,me.cy); ctx.moveTo(gc.x+me.r*VIEW.scale, gc.y); ctx.arc(gc.x,gc.y, me.r*VIEW.scale, 0, Math.PI*2); }
+        else if (me.t==='arc'){ var gca=w2s(me.cx,me.cy); var st=arcPtAt(me,0); var gs=w2s(st.x,st.y); ctx.moveTo(gs.x,gs.y); ctx.arc(gca.x, gca.y, me.r*VIEW.scale, -me.a0, -me.a1, me.ccw); }
+        else if (me.t==='path' || me.t==='poly'){
+          var mt = me.t==='path' ? tessPath(me) : me.pts.map(function(q){ return [q[0],q[1]]; });
+          if (!mt.length) return;
+          var m0 = w2s(mt[0][0], mt[0][1]);
+          ctx.moveTo(m0.x, m0.y);
+          for (var mq = 1; mq < mt.length; mq++){ var mp = w2s(mt[mq][0], mt[mq][1]); ctx.lineTo(mp.x, mp.y); }
+          if (me.closed) ctx.closePath();
+        }
+      });
+    }
     else if (e.t==='path'){
       var tp2 = e._tess2 || (e._tess2 = tessPath(e));
       var f0 = w2s(tp2[0][0], tp2[0][1]);
@@ -2236,6 +2271,14 @@ function doFillet(w, r){
 
 function entBBox(e){
   var xs = [], ys = [];
+  if (e.t === 'group'){
+    var gb = null;
+    e.ents.forEach(function(me){
+      var b = entBBox(me);
+      gb = gb ? {x0:Math.min(gb.x0,b.x0), y0:Math.min(gb.y0,b.y0), x1:Math.max(gb.x1,b.x1), y1:Math.max(gb.y1,b.y1)} : b;
+    });
+    return gb || {x0:0,y0:0,x1:0,y1:0};
+  }
   if (e.t === 'circle'){ xs = [e.cx-e.r, e.cx+e.r]; ys = [e.cy-e.r, e.cy+e.r]; }
   else if (e.t === 'arc'){
     var sw = arcSweepOf(e.a0, e.a1, e.ccw);
@@ -2265,6 +2308,7 @@ function rotPt(x, y, cx, cy, ca, sa){
   return [cx + dx*ca - dy*sa, cy + dx*sa + dy*ca];
 }
 function rotateEnt(e, cx, cy, ang){
+  if (e.t === 'group'){ e.ents.forEach(function(me){ rotateEnt(me, cx, cy, ang); }); return; }
   var ca = Math.cos(ang), sa = Math.sin(ang);
   if (e.t === 'rect'){ // rotation breaks axis alignment: become a closed poly first
     var pp = [[e.x,e.y],[e.x+e.w,e.y],[e.x+e.w,e.y+e.h],[e.x,e.y+e.h]];
@@ -2294,6 +2338,7 @@ function mirPt(x, y, px, py, ux, uy){
   return [rx, ry];
 }
 function mirrorEnt(e, px, py, ux, uy){
+  if (e.t === 'group'){ e.ents.forEach(function(me){ mirrorEnt(me, px, py, ux, uy); }); return; }
   var phi = Math.atan2(uy, ux);
   if (e.t === 'rect'){
     var axisVert = Math.abs(ux) < 1e-9, axisHorz = Math.abs(uy) < 1e-9;
@@ -2912,6 +2957,7 @@ function moveEntity(e, dx, dy){
   else if (e.t==='arc'){ e.cx+=dx; e.cy+=dy; }
   else if (e.t==='path'){ e.pts.forEach(function(p){ p[0]+=dx; p[1]+=dy; }); e._tess = null; }
   else if (e.t==='poly'){ e.pts.forEach(function(p){ p[0]+=dx; p[1]+=dy; }); }
+  else if (e.t==='group'){ e.ents.forEach(function(me){ moveEntity(me, dx, dy); }); }
 }
 
 /* ---------------- configurable tool panel ----------------
@@ -2930,6 +2976,8 @@ var ICON = {
  array:'<svg viewBox="0 0 18 18"><circle cx="4.5" cy="4.5" r="1.7"/><circle cx="11" cy="4.5" r="1.7"/><circle cx="4.5" cy="11" r="1.7"/><circle cx="11" cy="11" r="1.7" opacity=".45"/></svg>',
  offs:'<svg viewBox="0 0 18 18"><rect x="6" y="6" width="6" height="6"/><rect x="2.5" y="2.5" width="13" height="13" opacity=".5" stroke-dasharray="2.4 2"/></svg>',
  join:'<svg viewBox="0 0 18 18"><path d="M3 14 L8 9"/><path d="M10 7 L15 3"/><circle cx="9" cy="8" r="2.2" opacity=".6"/></svg>',
+ group:'<svg viewBox="0 0 18 18"><rect x="2.5" y="2.5" width="6" height="6"/><rect x="9.5" y="9.5" width="6" height="6"/><rect x="1" y="1" width="16" height="16" stroke-dasharray="2.5 2" opacity=".55"/></svg>',
+ ungroup:'<svg viewBox="0 0 18 18"><rect x="2" y="2" width="6" height="6"/><rect x="10" y="10" width="6" height="6"/><path d="M9.5 4 L15.5 4 M12.5 1.5 L12.5 6.5" opacity=".55"/></svg>',
  expl:'<svg viewBox="0 0 18 18"><path d="M4 12 L8 8"/><path d="M11 6 L14.5 3.5"/><path d="M12 12.5 L15 14.5"/><path d="M4.5 4 L6.5 6" opacity=".7"/></svg>',
  fillet:'<svg viewBox="0 0 18 18"><path d="M3 15.5 V9 A 6 6 0 0 1 9 3 H15.5"/><path d="M3 6.5 V3 h3.5" opacity=".45"/></svg>',
  trim:'<svg viewBox="0 0 18 18"><line x1="3" y1="9" x2="10" y2="9"/><line x1="12.5" y1="9" x2="15.5" y2="9" opacity=".4" stroke-dasharray="2 2"/><path d="M6 3.5 L11 13 M6 14.5 L9 9.4"/><circle cx="5" cy="15" r="1.3"/><circle cx="5" cy="3" r="1.3"/></svg>',
@@ -2951,8 +2999,10 @@ var PANEL_BTNS = {
  arc:   {tool:'arc', icon:'arc', title:'Arc (A) \u2014 start point, end point, then bow it with the mouse (3-point) or type a radius; + bows left of start\u2192end, \u2212 right'},
  poly:  {tool:'poly', icon:'poly', title:'Polyline (P) \u2014 click points, Enter ends, click start to close'},
  offsetT:{tool:'offset', icon:'offs', title:'Offset (S) \u2014 select or click shapes, then type the distance: + outward, \u2212 inward (open shapes: + is left of travel)'},
- joinBtn:{id:'joinBtn', icon:'join', title:'Join \u2014 stitch the selected open lines, arcs and polylines into connected paths (closes loops whose ends meet)'},
- explodeBtn:{id:'explodeBtn', icon:'expl', title:'Explode \u2014 break selected rects, polys and paths into their individual lines and arcs'},
+ groupBtn:{id:'groupBtn', icon:'group', title:'Group (G) \u2014 bundle the selected vectors into one object. All geometry is kept; it just selects and moves as one piece.'},
+ ungroupBtn:{id:'ungroupBtn', icon:'ungroup', title:'Ungroup (U) \u2014 break a group back into its separate vectors'},
+ joinBtn:{id:'joinBtn', icon:'join', title:'Join \u2014 stitch selected OPEN vectors whose ends meet into one continuous contour'},
+ explodeBtn:{id:'explodeBtn', icon:'expl', title:'Explode \u2014 break a contour into its individual lines and arcs'},
  copyT: {tool:'copy', icon:'copy', title:'Copy (D) \u2014 select first (V), then click base point and destination, or type @dx,dy'},
  mirrorT:{tool:'mirror', icon:'mirror', title:'Mirror (M) \u2014 select first; type H or V for a mirrored copy across the selection center, HH/VV to flip in place, or click 2 points for a custom axis'},
  rotateT:{tool:'rotate', icon:'rotate', title:'Rotate (O) \u2014 select first; click the rotation center, then type the angle in degrees (+ CCW)'},
@@ -2972,7 +3022,7 @@ var PANEL_BTNS = {
 var PANEL_GROUPS = [
  {id:'file',   label:'File',           btns:['newBtn','saveBtn','loadBtn']},
  {id:'create', label:'Create Vectors', btns:['select','line','rect','circle','arc','poly']},
- {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','copyT','mirrorT','rotateT','arrayT','joinBtn','explodeBtn']},
+ {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','copyT','mirrorT','rotateT','arrayT','groupBtn','ungroupBtn','joinBtn','explodeBtn']},
  {id:'guides', label:'Guides',         btns:['guide','clearGuides']},
  {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']}
  /* D1.2 adds: {id:'edit', label:'Edit Vectors', btns:['fillet','trim','extend','offset',...]} */
@@ -3079,9 +3129,48 @@ function wirePanel(){
   document.getElementById('undoBtn').addEventListener('click', doUndo);
   document.getElementById('redoBtn').addEventListener('click', doRedo);
   document.getElementById('fitBtn2').addEventListener('click', fit);
+  // ---- Group: bundle selected vectors into one object (geometry untouched) ----
+  function doGroupSelection(){
+    if (SEL.length < 2){
+      toast('info', 'Select two or more', 'Group bundles several vectors into one object. Select at least two.');
+      return;
+    }
+    pushUndo();
+    var flat = [];
+    SEL.map(function(i){ return DOC.ents[i]; })
+       .forEach(function(m){ if (m.t === 'group') flat = flat.concat(m.ents); else flat.push(m); });
+    var keep = DOC.ents.filter(function(_, i){ return SEL.indexOf(i) < 0; });
+    keep.push({t:'group', ents: flat});
+    DOC.ents = keep;
+    SEL = [DOC.ents.length-1];
+    persist(); draw();
+    toast('ok', 'Grouped', flat.length + ' vectors are now one object. All geometry kept \u2014 it selects and moves as one piece.');
+  }
+  // ---- Ungroup: break groups back into their members ----
+  function doUngroupSelection(){
+    var groupIdx = SEL.filter(function(i){ return DOC.ents[i] && DOC.ents[i].t === 'group'; });
+    if (!groupIdx.length){
+      toast('info', 'No group selected', 'Select a grouped object to break it back into separate vectors.');
+      return;
+    }
+    pushUndo();
+    var out = [], freed = 0;
+    DOC.ents.forEach(function(e, i){
+      if (groupIdx.indexOf(i) >= 0){ e.ents.forEach(function(me){ out.push(me); freed++; }); }
+      else out.push(e);
+    });
+    DOC.ents = out; SEL = [];
+    persist(); draw();
+    toast('ok', 'Ungrouped', 'Broke the group into ' + freed + ' separate vectors.');
+  }
+  document.getElementById('groupBtn').addEventListener('click', doGroupSelection);
+  document.getElementById('ungroupBtn').addEventListener('click', doUngroupSelection);
+  doGroupSelectionRef = doGroupSelection;
+  doUngroupSelectionRef = doUngroupSelection;
+
   document.getElementById('joinBtn').addEventListener('click', function(){
     if (!SEL.length){
-      toast('info', 'Nothing selected', 'Select the open pieces you want to join, then press Join.');
+      toast('info', 'Nothing selected', 'Select the open vectors you want to join, then press Join.');
       stagePrompt('selFirst'); return;
     }
     var n0 = DOC.ents.length;
@@ -3092,8 +3181,8 @@ function wirePanel(){
                           : 'Connected the selected pieces.');
       doJoin.merged = false;
     } else if (doJoin.lastMiss === 'closed'){
-      toast('info', 'Those shapes are closed',
-        'Join links pieces that have open ends. To merge closed shapes with their connectors into one outline: use Trim to cut each shape where the connectors meet it, remove the inner pieces, then Join what is left. (One-click merge/weld is coming.)');
+      toast('info', 'Those vectors are already closed',
+        'Join stitches OPEN vectors whose ends meet into one contour. If you want these to behave as a single object while keeping all the geometry, use Group instead.');
     } else {
       toast('warn', 'Nothing to join', 'Select at least two open pieces (lines, arcs, or open polylines) whose ends meet.');
     }
@@ -3103,7 +3192,11 @@ function wirePanel(){
       toast('info', 'Nothing selected', 'Select shapes to break into separate lines and arcs.');
       stagePrompt('selFirst'); return;
     }
-    if (doExplode()){ persist(); draw(); toast('ok', 'Exploded', 'Broke the selection into individual lines and arcs.'); }
+    if (SEL.some(function(i){ return DOC.ents[i] && DOC.ents[i].t === 'group'; })){
+      toast('info', 'That is a group', 'Use Ungroup to break a grouped object apart. Explode breaks a contour into lines and arcs.');
+      return;
+    }
+    if (doExplode()){ persist(); draw(); toast('ok', 'Exploded', 'Broke the contour into individual lines and arcs.'); }
     else toast('warn', 'Nothing to explode', 'Explode works on rectangles, polylines and paths.');
   });
   document.getElementById('newBtn').addEventListener('click', function(){
@@ -3460,6 +3553,14 @@ function wire(){
     }
     var toolBusy = (TOOL !== 'select') && (DRAW !== null || document.getElementById('promptBar').classList.contains('on'));
     if (!toolBusy){
+      if ((e.key === 'g' || e.key === 'G') && e.ctrlKey && SEL.length){
+        e.preventDefault();
+        if (e.shiftKey) doUngroupSelectionRef(); else doGroupSelectionRef();
+        return;
+      }
+      if ((e.key === 'u' || e.key === 'U') && e.ctrlKey && SEL.length){
+        e.preventDefault(); doUngroupSelectionRef(); return;
+      }
       if ((e.key === 'x' || e.key === 'X') && SEL.length){
         pushUndo();
         SEL.forEach(function(i){
