@@ -55,6 +55,20 @@
   #settingsPanel .srow .unit{font-size:12px;color:var(--muted)}
   #settingsPanel input[type=number]{width:70px}
   #settingsPanel input[type=color]{width:38px;height:24px;padding:0;border:1px solid var(--line);border-radius:4px;background:none;cursor:pointer}
+  #textModal{position:fixed;inset:0;background:rgba(0,0,0,0.12);display:flex;align-items:flex-start;justify-content:flex-end;padding:72px 24px 0 0;z-index:200}
+  #textModal[hidden]{display:none}
+  #textPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 20px;width:360px;box-shadow:0 10px 40px rgba(0,0,0,0.5)}
+  #textPanel h3{margin:0 0 12px;font-size:16px}
+  #textPanel textarea{width:100%;box-sizing:border-box;min-height:72px;resize:vertical;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:8px 10px;font:15px/1.4 system-ui,sans-serif}
+  #textPanel textarea:focus{outline:none;border-color:var(--amber)}
+  #textPanel .srow{display:flex;align-items:center;gap:8px;margin-top:10px}
+  #textPanel .srow label{font-size:13px;color:var(--muted);white-space:nowrap}
+  #textPanel select{flex:1;min-width:0}
+  #textPanel input[type=number]{width:70px}
+  #textPanel .unit{font-size:12px;color:var(--muted)}
+  #textPanel .snote{font-size:11.5px;color:var(--muted);margin:10px 0 0;line-height:1.45}
+  #textPanel .tbtns{margin-top:16px}
+  #textPanel .tbtns .grow{flex:1}
   #settingsPanel .snote{font-size:11.5px;color:var(--muted);margin:4px 0 0;line-height:1.4}
   header .sub{color:var(--muted);font-size:12.5px}
   header .spacer{flex:1}
@@ -108,6 +122,32 @@
   </header>
 
   <div id="toastWrap"></div>
+
+  <div id="textModal" hidden>
+    <div id="textPanel" role="dialog" aria-labelledby="textTitle">
+      <h3 id="textTitle">Add text</h3>
+      <textarea id="txtStr" rows="3" spellcheck="false" placeholder="Type your text"></textarea>
+      <div class="srow">
+        <label for="txtFont">Font</label>
+        <select id="txtFont"></select>
+        <button id="txtLoadFont" title="Use a .ttf, .otf or .woff font from your computer">Use font file…</button>
+      </div>
+      <div class="srow">
+        <label for="txtH">Letter height</label>
+        <input type="number" id="txtH" step="0.5" min="0.1"> <span class="unit">mm</span>
+        <label for="txtAlign" style="margin-left:10px">Align</label>
+        <select id="txtAlign"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select>
+      </div>
+      <p class="snote">Letter height is the height of a capital letter. For through-cuts, a stencil font such as Allerta Stencil keeps the middles of O, A and R attached so they don&rsquo;t fall out.</p>
+      <div class="srow tbtns">
+        <button id="txtCurves" title="Place the text as ordinary shapes instead of editable text">Convert to curves</button>
+        <span class="grow"></span>
+        <button id="txtCancel">Cancel</button>
+        <button id="txtOK" class="primary">Place text</button>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="fontFile" accept=".ttf,.otf,.woff" hidden>
 
   <div id="settingsModal" hidden>
     <div id="settingsPanel">
@@ -179,9 +219,10 @@
   </footer>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.34.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.35.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -195,15 +236,308 @@ var DOC = {stock:{w:200,h:120,origin:'corner'}, ents:[], guides:[], dims:[]};
    re-reads the geometry every frame and can never go stale. Editing its value drives
    the geometry through the same relApply/entApply paths the D-key uses. */
 var ENT_SEQ = 1;
-function entId(e){                       // lazily assign a stable id
+function entId(e){                       // lazily assign a stable, globally unique id
   if (!e) return null;
-  if (!e._id) e._id = 'e' + (ENT_SEQ++);
+  // random prefix + counter: never collides with ids saved in an earlier session
+  if (!e._id) e._id = 'e' + Math.random().toString(36).slice(2, 9) + (ENT_SEQ++).toString(36);
   return e._id;
 }
 function entById(id){
   for (var i = 0; i < DOC.ents.length; i++) if (DOC.ents[i]._id === id) return DOC.ents[i];
   return null;
 }
+/* ---------------- text ----------------
+   A text entity stays editable: {t:'text', str, font, h, align, x, y, rot, fy}.
+   (x,y) is the anchor on the first line's baseline; h is the CAPITAL-letter height in mm;
+   fy marks a mirrored copy. Glyph outlines come from opentype.js, flattened to polylines
+   and cached per entity (in a WeakMap, so caches never leak into saved files or undo). */
+var FONT_CDN = 'https://cdn.jsdelivr.net/npm/@fontsource/';
+var FONTS = {
+  'roboto':          {name:'Roboto',          pkg:'roboto@5.3.0',          file:'roboto-latin-400-normal.woff'},
+  'roboto-bold':     {name:'Roboto Bold',     pkg:'roboto@5.3.0',          file:'roboto-latin-700-normal.woff'},
+  'oswald':          {name:'Oswald',          pkg:'oswald@5.3.0',          file:'oswald-latin-400-normal.woff'},
+  'bebas-neue':      {name:'Bebas Neue',      pkg:'bebas-neue@5.3.0',      file:'bebas-neue-latin-400-normal.woff'},
+  'allerta-stencil': {name:'Allerta Stencil', pkg:'allerta-stencil@5.3.0', file:'allerta-stencil-latin-400-normal.woff'},
+  'roboto-slab':     {name:'Roboto Slab',     pkg:'roboto-slab@5.3.0',     file:'roboto-slab-latin-400-normal.woff'},
+  'roboto-mono':     {name:'Roboto Mono',     pkg:'roboto-mono@5.3.0',     file:'roboto-mono-latin-400-normal.woff'},
+  'pacifico':        {name:'Pacifico',        pkg:'pacifico@5.3.0',        file:'pacifico-latin-400-normal.woff'}
+};
+var FONTS_CACHED_READY = false;   // true once saved custom fonts have been read back
+var FONT_WARNED = {};
+function fontObj(key){
+  var f = FONTS[key];
+  if (!f){
+    if (FONTS_CACHED_READY && !FONT_WARNED[key]){
+      FONT_WARNED[key] = true;
+      toast('warn', 'Font not available',
+        'This drawing uses "' + String(key).replace(/^custom:/, '') + '", which isn\u2019t loaded in this browser. Open the text and load the font file again to see it.');
+    }
+    return null;
+  }
+  if (f.font) return f.font;
+  if (!f.custom && !f.loading && !f.failed) loadFont(key);
+  return null;
+}
+function loadFont(key){
+  var f = FONTS[key];
+  if (!f || f.custom || f.loading) return;
+  if (typeof opentype === 'undefined'){
+    f.failed = true;
+    toast('err', 'Text engine didn\u2019t load', 'Text needs an internet connection the first time the page opens. Reload once you\u2019re online.');
+    return;
+  }
+  f.loading = true;
+  fetch(FONT_CDN + f.pkg + '/files/' + f.file)
+    .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+    .then(function(buf){ f.font = opentype.parse(buf); f.loading = false; draw(); })
+    .catch(function(){
+      f.loading = false; f.failed = true;
+      toast('warn', 'Couldn\u2019t load ' + f.name, 'Check your internet connection, or use a font file from your computer.');
+      draw();
+    });
+}
+function fontDisplayName(font){
+  var n = font.names || {};
+  function en(o){ return o ? (o.en || o[Object.keys(o)[0]]) : ''; }
+  var fam = en(n.fontFamily) || 'Custom font', sub = en(n.fontSubfamily) || '';
+  return {fam:fam, sub:sub, label: fam + (sub && sub !== 'Regular' ? ' ' + sub : '')};
+}
+// custom fonts persist in IndexedDB (they can be too large for localStorage)
+function fontDB(){
+  return new Promise(function(res, rej){
+    if (!window.indexedDB) return rej(new Error('no indexedDB'));
+    var rq = indexedDB.open('d454Fonts', 1);
+    rq.onupgradeneeded = function(){ rq.result.createObjectStore('fonts', {keyPath:'key'}); };
+    rq.onsuccess = function(){ res(rq.result); };
+    rq.onerror = function(){ rej(rq.error); };
+  });
+}
+function registerCustomFont(buf, save){
+  var font = opentype.parse(buf);              // throws on unsupported formats (e.g. woff2)
+  var dn = fontDisplayName(font);
+  var key = 'custom:' + dn.label;
+  FONTS[key] = {name: dn.label, custom:true, font:font};
+  if (save){
+    fontDB().then(function(db){
+      db.transaction('fonts', 'readwrite').objectStore('fonts').put({key:key, name:dn.label, buf:buf});
+    }).catch(function(){});
+  }
+  return key;
+}
+function loadCachedFonts(done){
+  fontDB().then(function(db){
+    var rq = db.transaction('fonts', 'readonly').objectStore('fonts').getAll();
+    rq.onsuccess = function(){
+      (rq.result || []).forEach(function(rec){
+        try{ if (typeof opentype !== 'undefined') registerCustomFont(rec.buf, false); }catch(e){}
+      });
+      FONTS_CACHED_READY = true; if (done) done(); draw();
+    };
+    rq.onerror = function(){ FONTS_CACHED_READY = true; if (done) done(); };
+  }).catch(function(){ FONTS_CACHED_READY = true; if (done) done(); });
+}
+function capHeightUnits(font){
+  try{
+    var g = font.charToGlyph('H');
+    if (g && g.index > 0){ var b = g.getBoundingBox(); if (b.y2 > 0) return b.y2; }
+  }catch(e){}
+  var os2 = font.tables && font.tables.os2;
+  if (os2 && os2.sCapHeight > 0) return os2.sCapHeight;
+  return font.unitsPerEm * 0.7;
+}
+// flatten opentype path commands (y-down) into closed contours; Wang's bound picks the
+// segment count so every curve stays within `tol` mm of the true outline
+function flattenGlyphCommands(cmds, tol, out){
+  var cur = null, x = 0, y = 0;
+  function close(){ if (cur && cur.length >= 3){
+      var a = cur[0], z = cur[cur.length-1];
+      if (Math.hypot(a[0]-z[0], a[1]-z[1]) < 1e-9) cur.pop();
+      if (cur.length >= 3) out.push(cur);
+    } cur = null; }
+  cmds.forEach(function(c){
+    if (c.type === 'M'){ close(); cur = [[c.x, c.y]]; x = c.x; y = c.y; }
+    else if (c.type === 'L'){ if (!cur) cur = [[x, y]]; cur.push([c.x, c.y]); x = c.x; y = c.y; }
+    else if (c.type === 'Q'){
+      if (!cur) cur = [[x, y]];
+      var dq = Math.hypot(x - 2*c.x1 + c.x, y - 2*c.y1 + c.y) / 4;
+      var nq = Math.max(1, Math.min(64, Math.ceil(Math.sqrt(dq / tol))));
+      for (var i = 1; i <= nq; i++){
+        var t = i/nq, u = 1-t;
+        cur.push([u*u*x + 2*u*t*c.x1 + t*t*c.x, u*u*y + 2*u*t*c.y1 + t*t*c.y]);
+      }
+      x = c.x; y = c.y;
+    }
+    else if (c.type === 'C'){
+      if (!cur) cur = [[x, y]];
+      var d1 = Math.hypot(x - 2*c.x1 + c.x2, y - 2*c.y1 + c.y2);
+      var d2 = Math.hypot(c.x1 - 2*c.x2 + c.x, c.y1 - 2*c.y2 + c.y);
+      var nc = Math.max(1, Math.min(64, Math.ceil(Math.sqrt(0.75 * Math.max(d1, d2) / tol))));
+      for (var j = 1; j <= nc; j++){
+        var s2 = j/nc, v = 1-s2;
+        cur.push([v*v*v*x + 3*v*v*s2*c.x1 + 3*v*s2*s2*c.x2 + s2*s2*s2*c.x,
+                  v*v*v*y + 3*v*v*s2*c.y1 + 3*v*s2*s2*c.y2 + s2*s2*s2*c.y]);
+      }
+      x = c.x; y = c.y;
+    }
+    else if (c.type === 'Z'){ close(); }
+  });
+  close();
+}
+var TEXT_CACHE = new WeakMap();
+// glyph outlines in LOCAL coords (x right, y up, origin = anchor), or null while the font loads
+function textLocal(e){
+  var font = fontObj(e.font);
+  if (!font) return null;
+  var sig = [e.str, e.font, e.h, e.align].join('\u0001');
+  var c = TEXT_CACHE.get(e);
+  if (c && c.sig === sig && c.font === font) return c;
+  var fs = e.h * font.unitsPerEm / capHeightUnits(font);        // em size giving cap height = h
+  var sc = fs / font.unitsPerEm;
+  var lineH = (font.ascender - font.descender) * sc * 1.1;
+  var raw = [];
+  String(e.str).split('\n').forEach(function(line, li){
+    var w = font.getAdvanceWidth(line, fs);
+    var ox = e.align === 'center' ? -w/2 : (e.align === 'right' ? -w : 0);
+    flattenGlyphCommands(font.getPath(line, ox, li * lineH, fs).commands, 0.01, raw);
+  });
+  var contours = raw.map(function(ct){ return ct.map(function(p){ return [p[0], -p[1]]; }); });
+  var box = null;
+  contours.forEach(function(ct){ ct.forEach(function(p){
+    if (!box) box = {x0:p[0], y0:p[1], x1:p[0], y1:p[1]};
+    else { box.x0 = Math.min(box.x0,p[0]); box.y0 = Math.min(box.y0,p[1]);
+           box.x1 = Math.max(box.x1,p[0]); box.y1 = Math.max(box.y1,p[1]); }
+  }); });
+  if (!box) box = {x0:0, y0:0, x1:e.h*0.5, y1:e.h};              // blank text: small placeholder
+  c = {sig:sig, font:font, contours:contours, box:box, lineH:lineH};
+  TEXT_CACHE.set(e, c);
+  return c;
+}
+function textXform(e, lx, ly){
+  var fy = e.fy ? -1 : 1, rot = e.rot || 0, c = Math.cos(rot), s = Math.sin(rot);
+  ly *= fy;
+  return [e.x + lx*c - ly*s, e.y + lx*s + ly*c];
+}
+function textLocalBox(e){
+  var L = textLocal(e);
+  if (L) return L.box;
+  // font still loading: a reasonable estimate so the text is still visible and pickable
+  var lines = String(e.str).split('\n'), n = 0;
+  lines.forEach(function(l){ n = Math.max(n, l.length); });
+  var w = Math.max(1, n) * e.h * 0.62;
+  var ox = e.align === 'center' ? -w/2 : (e.align === 'right' ? -w : 0);
+  return {x0:ox, y0:-(lines.length-1) * e.h * 1.45 - e.h * 0.25, x1:ox + w, y1:e.h};
+}
+function textWorld(e){
+  var L = textLocal(e);
+  if (!L) return null;
+  return L.contours.map(function(ct){ return ct.map(function(p){ return textXform(e, p[0], p[1]); }); });
+}
+function textCorners(e){
+  var b = textLocalBox(e);
+  return [[b.x0,b.y0],[b.x1,b.y0],[b.x1,b.y1],[b.x0,b.y1]].map(function(p){ return textXform(e, p[0], p[1]); });
+}
+// 0 when the point is inside the text's box, otherwise the distance to it
+function textHitDist(e, w){
+  var rot = -(e.rot || 0), c = Math.cos(rot), s = Math.sin(rot);
+  var dx = w.x - e.x, dy = w.y - e.y;
+  var lx = dx*c - dy*s, ly = (dx*s + dy*c) * (e.fy ? -1 : 1);
+  var b = textLocalBox(e);
+  return Math.hypot(Math.max(b.x0 - lx, 0, lx - b.x1), Math.max(b.y0 - ly, 0, ly - b.y1));
+}
+// text -> ordinary closed shapes (one group per text, one shape per outline)
+function textToCurves(e){
+  var W = textWorld(e);
+  if (!W) return null;
+  var shapes = W.filter(function(ct){ return ct.length >= 3; })
+                .map(function(ct){ return {t:'poly', pts:ct, closed:true}; });
+  if (!shapes.length) return null;
+  shapes.forEach(function(sh){ if (e.con) sh.con = true; if (e.tp) sh.tp = true; });
+  return shapes.length === 1 ? shapes[0] : {t:'group', ents:shapes};
+}
+
+var TXT = null;   // the text being added/edited while the dialog is open
+function refreshFontSelect(selKey){
+  var sel = document.getElementById('txtFont');
+  sel.innerHTML = '';
+  function grp(label, keys){
+    if (!keys.length) return;
+    var g = document.createElement('optgroup'); g.label = label;
+    keys.forEach(function(k){ var o = document.createElement('option'); o.value = k; o.textContent = FONTS[k].name; g.appendChild(o); });
+    sel.appendChild(g);
+  }
+  var keys = Object.keys(FONTS);
+  grp('Built in', keys.filter(function(k){ return !FONTS[k].custom; }));
+  grp('Your fonts', keys.filter(function(k){ return FONTS[k].custom; }));
+  if (selKey && !FONTS[selKey]){
+    var o = document.createElement('option'); o.value = selKey;
+    o.textContent = String(selKey).replace(/^custom:/, '') + ' (not loaded)';
+    sel.appendChild(o);
+  }
+  sel.value = selKey;
+}
+function openTextModal(idx, at){
+  DRAW = null;
+  var e;
+  pushUndo();                                     // one undo step for the whole add/edit
+  if (idx === null || idx === undefined){
+    e = {t:'text', str:'', font: UICFG.lastFont || 'roboto', h: UICFG.lastTextH || 10,
+         align:'left', x:at.x, y:at.y, rot:0};
+    DOC.ents.push(e);
+    TXT = {ent:e, isNew:true};
+  } else {
+    e = DOC.ents[idx];
+    TXT = {ent:e, isNew:false, before:JSON.stringify(e)};
+  }
+  fontObj(e.font);                                // start loading the font right away
+  document.getElementById('textTitle').textContent = TXT.isNew ? 'Add text' : 'Edit text';
+  document.getElementById('txtOK').textContent = TXT.isNew ? 'Place text' : 'Update text';
+  document.getElementById('txtStr').value = e.str;
+  refreshFontSelect(e.font);
+  document.getElementById('txtH').value = e.h;
+  document.getElementById('txtAlign').value = e.align || 'left';
+  document.getElementById('textModal').hidden = false;
+  var ta = document.getElementById('txtStr'); ta.focus(); ta.select();
+  draw();
+}
+function closeTextModal(commit){
+  if (!TXT) return;
+  var e = TXT.ent, i = DOC.ents.indexOf(e);
+  document.getElementById('textModal').hidden = true;
+  if (!commit){
+    if (TXT.isNew){ if (i >= 0) DOC.ents.splice(i, 1); }
+    else if (i >= 0) DOC.ents[i] = JSON.parse(TXT.before);
+    UNDO.pop();                                   // nothing changed, so drop the undo step
+  } else if (!String(e.str).trim()){
+    if (i >= 0) DOC.ents.splice(i, 1);
+    if (TXT.isNew) UNDO.pop();
+    else toast('info', 'Text removed', 'The text was empty, so it was deleted. Undo brings it back.');
+  } else {
+    UICFG.lastFont = e.font; UICFG.lastTextH = e.h; uiCfgSave();
+    SEL = [i];
+  }
+  TXT = null;
+  if (TOOL === 'text') stagePrompt('text0');
+  persist(); draw();
+}
+function convertTextsToCurves(idxs){
+  var texts = idxs.filter(function(i){ return DOC.ents[i] && DOC.ents[i].t === 'text'; });
+  if (!texts.length) return 0;
+  if (texts.some(function(i){ return !textLocal(DOC.ents[i]); })){
+    toast('warn', 'Font still loading', 'Wait until the letters appear, then convert again.');
+    return 0;
+  }
+  pushUndo();
+  var n = 0;
+  DOC.ents = DOC.ents.map(function(e, i){
+    if (texts.indexOf(i) < 0) return e;
+    var c = textToCurves(e);
+    if (c){ n++; return c; }
+    return e;
+  });
+  SEL = []; persist(); draw();
+  return n;
+}
+
 function dimsArr(){ if (!DOC.dims) DOC.dims = []; return DOC.dims; }
 // current measured value of a dimension, or null if its references are gone
 function dimValue(d){
@@ -299,6 +633,7 @@ function snapPoints(){
     if (e.t==='line'){ pts.push({x:e.x1,y:e.y1,k:'end'},{x:e.x2,y:e.y2,k:'end'},
                                 {x:(e.x1+e.x2)/2,y:(e.y1+e.y2)/2,k:'mid'}); }
     else if (e.t==='circle'){ pts.push({x:e.cx,y:e.cy,k:'center'}); }
+    else if (e.t==='text'){ pts.push({x:e.x,y:e.y,k:'end'}); }
     else if (e.t==='rect'){
       pts.push({x:e.x,y:e.y,k:'end'},{x:e.x+e.w,y:e.y,k:'end'},
                {x:e.x+e.w,y:e.y+e.h,k:'end'},{x:e.x,y:e.y+e.h,k:'end'},
@@ -429,11 +764,13 @@ function pickEntity(w){
         d = Math.min(d, distToSeg(w.x, w.y, q1[0], q1[1], q2[0], q2[1]));
       }
     }
+    else if (e.t==='text') d = textHitDist(e, w);
     else if (e.t==='group'){
       // a group is hit when any of its members is hit
       e.ents.forEach(function(me){
         var md = 1e9;
-        if (me.t==='circle') md = Math.abs(Math.hypot(w.x-me.cx, w.y-me.cy) - me.r);
+        if (me.t==='text') md = textHitDist(me, w);
+        else if (me.t==='circle') md = Math.abs(Math.hypot(w.x-me.cx, w.y-me.cy) - me.r);
         else if (me.t==='arc') md = arcHitDist(me, w);
         else if (me.t==='path'){
           var mt = tessPath(me, 0.25);
@@ -453,9 +790,11 @@ function pickEntity(w){
 }
 
 /* ---------------- undo ---------------- */
-function pushUndo(){ UNDO.push(JSON.stringify({ents:DOC.ents, guides:DOC.guides})); if (UNDO.length>200) UNDO.shift(); REDO = []; }
-function doUndo(){ if (!UNDO.length) return; REDO.push(JSON.stringify({ents:DOC.ents,guides:DOC.guides})); var s=JSON.parse(UNDO.pop()); DOC.ents=s.ents; DOC.guides=s.guides; SEL=[]; draw(); persist(); }
-function doRedo(){ if (!REDO.length) return; UNDO.push(JSON.stringify({ents:DOC.ents,guides:DOC.guides})); var s=JSON.parse(REDO.pop()); DOC.ents=s.ents; DOC.guides=s.guides; SEL=[]; draw(); persist(); }
+function docSnap(){ return JSON.stringify({ents:DOC.ents, guides:DOC.guides, dims:DOC.dims || []}); }
+function docRestore(str){ var s=JSON.parse(str); DOC.ents=s.ents; DOC.guides=s.guides; DOC.dims=s.dims || []; }
+function pushUndo(){ UNDO.push(docSnap()); if (UNDO.length>200) UNDO.shift(); REDO = []; }
+function doUndo(){ if (!UNDO.length) return; REDO.push(docSnap()); docRestore(UNDO.pop()); SEL=[]; draw(); persist(); }
+function doRedo(){ if (!REDO.length) return; UNDO.push(docSnap()); docRestore(REDO.pop()); SEL=[]; draw(); persist(); }
 
 /* ---------------- numeric entry parsing ---------------- */
 /* Accepted while a point is expected:
@@ -488,6 +827,7 @@ function parseNumericPoint(str, ref){
 /* ---------------- tool state machine ---------------- */
 var STAGE_LABEL = {
   line0:  'Line \u2014 click first point, or type "x,y"',
+  text0:  'Text \u2014 click where the text should start (its baseline), or click existing text to edit it',
   line1:  'Line \u2014 next point: "x,y" abs \u00b7 "@dx,dy" rel \u00b7 "50<45" length<angle\u00b0',
   rect0:  'Rect \u2014 click first corner, or type "x,y"',
   rect1:  'Rect \u2014 opposite corner, or type "W,H" e.g. "120,80"',
@@ -540,6 +880,7 @@ var TOOLS = {
   //       'transform' (acts on a selection), 'select'
   select:{kind:'select', prompt:null, keepSel:true},
   line:  {kind:'create', prompt:'line0'},
+  text:  {kind:'create', prompt:'text0'},
   rect:  {kind:'create', prompt:'rect0'},
   circle:{kind:'create', prompt:'circle0'},
   poly:  {kind:'create', prompt:'poly0'},
@@ -552,7 +893,7 @@ var TOOLS = {
   dim:   {kind:'edit',   prompt:'dim0',    hover:hoverDim},
   offset:{kind:'transform', prompt:'offset0', keepSel:true},
   copy:  {kind:'transform', prompt:'copy0',   keepSel:true},
-  mirror:{kind:'transform', prompt:'mirror0', keepSel:true},
+  mirror:{kind:'transform', prompt:'mirror0', keepSel:true, letters:'hv'},
   rotate:{kind:'transform', prompt:'rotate0', keepSel:true},
   array: {kind:'transform', prompt:'array0',  keepSel:true}
 };
@@ -646,7 +987,19 @@ var doGroupSelectionRef = function(){}, doUngroupSelectionRef = function(){};
 // Single source of truth for tool hotkeys — both the canvas handler and the entry field use this.
 var TOOL_HOTKEYS = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide',
                     f:'fillet', t:'trim', e:'extend', d:'copy', m:'mirror', o:'rotate',
-                    s:'offset', n:'node', y:'array', i:'dim'};
+                    s:'offset', n:'node', y:'array', i:'dim', k:'text'};
+// Is a typed letter a TOOL HOTKEY, or DATA for the active tool? Letters are data while an operation
+// is in progress (D5 diameter, R2.5 radius, E5 edge distance) and when the idle tool itself takes
+// letters (mirror's H / V / HH / VV). Otherwise a hotkey letter switches tools on the first press.
+function letterIsHotkey(k, fieldVal){
+  if (!TOOL_HOTKEYS[k]) return false;
+  if (TOOL === 'select') return true;
+  if (DRAW !== null) return false;                                   // mid-operation: data
+  var desc = TOOLS[TOOL];
+  if (desc && desc.letters && desc.letters.indexOf(k) >= 0) return false;
+  if (TOOL === 'fillet') return true;                                // radius already armed live
+  return !/[0-9.\-@<,]/.test(fieldVal || '');                        // don't break a half-typed value
+}
 
 function toolMgrEnter(t){
   var desc = TOOLS[t] || TOOLS.select;
@@ -698,6 +1051,12 @@ function toolClick(w, snap){
       DOC.ents.push({t:'circle', cx:DRAW.x, cy:DRAW.y, r:Math.hypot(p.x-DRAW.x, p.y-DRAW.y)});
       DRAW = null; stagePrompt('circle0'); persist();
     }
+  }
+  else if (TOOL === 'text'){
+    var hitT = pickEntity(w);
+    if (hitT !== null && DOC.ents[hitT].t === 'text') openTextModal(hitT);
+    else openTextModal(null, {x:p.x, y:p.y});
+    return;
   }
   else if (TOOL === 'poly'){
     if (!DRAW){ DRAW = {stage:1, pts:[[p.x,p.y]]}; stagePrompt('poly1'); }
@@ -860,6 +1219,11 @@ function toolClick(w, snap){
     } else stagePrompt('editMiss');
   }
   else if (TOOL === 'trim'){
+    var trHit = pickEntity(w);
+    if (trHit !== null && DOC.ents[trHit].t === 'text'){
+      toast('info', 'Convert the text first', 'Text can\u2019t be trimmed while it\u2019s editable. Select it and use Convert to curves, then trim.');
+      return;
+    }
     if (doTrim(w)){ persist(); stagePrompt('trim0'); }
     else {
       stagePrompt('editMiss');
@@ -995,7 +1359,9 @@ function toolCommitText(txt){
     if (!isNaN(od) && Math.abs(od) > 1e-9){
       pushUndo();
       var made = [];
+      var offsetTextSkipped = false;
       SEL.forEach(function(i){
+        if (DOC.ents[i].t === 'text'){ offsetTextSkipped = true; return; }
         var ne = offsetEnt(DOC.ents[i], od);
         if (ne){
           if (DOC.ents[i].tp) ne.tp = true;
@@ -1004,6 +1370,8 @@ function toolCommitText(txt){
           DOC.ents.push(ne);
         }
       });
+      if (offsetTextSkipped)
+        toast('info', 'Text was skipped', 'Offset works on shapes. Convert the text to curves first to offset it.');
       if (made.length){
         SEL = made; persist();                     // chain: offset again offsets the new ring
         toast('ok', 'Offset created', made.length + ' offset shape(s) at ' + od + ' mm.');
@@ -1722,9 +2090,33 @@ function draw(){
       var ca=w2s(e.cx,e.cy);
       ctx.arc(ca.x, ca.y, e.r*VIEW.scale, -e.a0, -e.a1, e.ccw); // screen Y-flip mirrors handedness
     }
+    else if (e.t==='text'){
+      var tw = textWorld(e);
+      if (tw){
+        tw.forEach(function(ct){
+          var t0 = w2s(ct[0][0], ct[0][1]); ctx.moveTo(t0.x, t0.y);
+          for (var tk = 1; tk < ct.length; tk++){ var tq2 = w2s(ct[tk][0], ct[tk][1]); ctx.lineTo(tq2.x, tq2.y); }
+          ctx.closePath();
+        });
+      } else {
+        ctx.setLineDash([4,3]);                     // font still loading / missing
+        var tc = textCorners(e), tc0 = w2s(tc[0][0], tc[0][1]);
+        ctx.moveTo(tc0.x, tc0.y);
+        for (var tci = 1; tci < 4; tci++){ var tcp = w2s(tc[tci][0], tc[tci][1]); ctx.lineTo(tcp.x, tcp.y); }
+        ctx.closePath();
+      }
+    }
     else if (e.t==='group'){
       // draw each member's outline into the same path, so the group strokes as one unit
       e.ents.forEach(function(me){
+        if (me.t==='text'){
+          (textWorld(me) || []).forEach(function(ct){
+            var gt0 = w2s(ct[0][0], ct[0][1]); ctx.moveTo(gt0.x, gt0.y);
+            for (var gk = 1; gk < ct.length; gk++){ var gq = w2s(ct[gk][0], ct[gk][1]); ctx.lineTo(gq.x, gq.y); }
+            ctx.closePath();
+          });
+          return;
+        }
         if (me.t==='line'){ var g1=w2s(me.x1,me.y1), g2=w2s(me.x2,me.y2); ctx.moveTo(g1.x,g1.y); ctx.lineTo(g2.x,g2.y); }
         else if (me.t==='rect'){ var gr1=w2s(me.x,me.y+me.h), gr2=w2s(me.x+me.w,me.y); ctx.rect(gr1.x,gr1.y, gr2.x-gr1.x, gr2.y-gr1.y); }
         else if (me.t==='circle'){ var gc=w2s(me.cx,me.cy); ctx.moveTo(gc.x+me.r*VIEW.scale, gc.y); ctx.arc(gc.x,gc.y, me.r*VIEW.scale, 0, Math.PI*2); }
@@ -2562,9 +2954,14 @@ function filletPathVertex(pe, vi, r){
   var outBulge = spanBulgeBetween(cOutLocal, best.T2, {x:pe.pts[iNext][0], y:pe.pts[iNext][1]});
   pts.splice(vi, 1, [best.T1.x, best.T1.y, bulgeF], [best.T2.x, best.T2.y, outBulge]);
   return {t:'path', pts:pts, closed:pe.closed};
-}function cloneEnt(e){
+}
+
+function cloneEnt(e){
   var c = JSON.parse(JSON.stringify(e));
-  delete c._tess; delete c._tess2;
+  (function strip(o){
+    delete o._tess; delete o._tess2; delete o._id;   // a copy is a new entity with its own identity
+    if (o.ents) o.ents.forEach(strip);
+  })(c);
   return c;
 }
 
@@ -2656,6 +3053,12 @@ function entBBox(e){
     });
     return gb || {x0:0,y0:0,x1:0,y1:0};
   }
+  if (e.t === 'text'){
+    var tw2 = textWorld(e);
+    if (tw2 && tw2.length) tw2.forEach(function(ct){ ct.forEach(function(q){ xs.push(q[0]); ys.push(q[1]); }); });
+    else textCorners(e).forEach(function(q){ xs.push(q[0]); ys.push(q[1]); });
+    return {x0:Math.min.apply(null,xs), y0:Math.min.apply(null,ys), x1:Math.max.apply(null,xs), y1:Math.max.apply(null,ys)};
+  }
   if (e.t === 'circle'){ xs = [e.cx-e.r, e.cx+e.r]; ys = [e.cy-e.r, e.cy+e.r]; }
   else if (e.t === 'arc'){
     var sw = arcSweepOf(e.a0, e.a1, e.ccw);
@@ -2687,6 +3090,11 @@ function rotPt(x, y, cx, cy, ca, sa){
 function rotateEnt(e, cx, cy, ang){
   if (e.t === 'group'){ e.ents.forEach(function(me){ rotateEnt(me, cx, cy, ang); }); return; }
   var ca = Math.cos(ang), sa = Math.sin(ang);
+  if (e.t === 'text'){
+    var tr = rotPt(e.x, e.y, cx, cy, ca, sa); e.x = tr[0]; e.y = tr[1];
+    e.rot = (e.rot || 0) + ang;
+    return;
+  }
   if (e.t === 'rect'){ // rotation breaks axis alignment: become a closed poly first
     var pp = [[e.x,e.y],[e.x+e.w,e.y],[e.x+e.w,e.y+e.h],[e.x,e.y+e.h]];
     e.t = 'poly'; e.pts = pp; e.closed = true;
@@ -2717,6 +3125,12 @@ function mirPt(x, y, px, py, ux, uy){
 function mirrorEnt(e, px, py, ux, uy){
   if (e.t === 'group'){ e.ents.forEach(function(me){ mirrorEnt(me, px, py, ux, uy); }); return; }
   var phi = Math.atan2(uy, ux);
+  if (e.t === 'text'){
+    var tm = mirPt(e.x, e.y, px, py, ux, uy); e.x = tm[0]; e.y = tm[1];
+    e.rot = 2*phi - (e.rot || 0);
+    e.fy = !e.fy;
+    return;
+  }
   if (e.t === 'rect'){
     var axisVert = Math.abs(ux) < 1e-9, axisHorz = Math.abs(uy) < 1e-9;
     if (axisVert || axisHorz){ // stays a rect
@@ -3157,6 +3571,14 @@ function tessPath(e, maxAng){
 
 /* ---------------- entity dimensions ---------------- */
 function entDims(e){
+  if (e.t === 'text'){
+    var fb = entBBox(e), fname = FONTS[e.font] ? FONTS[e.font].name : String(e.font).replace(/^custom:/, '');
+    var shown = String(e.str).replace(/\n/g, ' / ');
+    if (shown.length > 24) shown = shown.slice(0, 23) + '\u2026';
+    return 'Text \u201c' + shown + '\u201d  ' + fname + '  height ' + (+e.h).toFixed(2) +
+           '  size ' + (fb.x1-fb.x0).toFixed(2) + ' \u00d7 ' + (fb.y1-fb.y0).toFixed(2) +
+           (e.rot ? '  \u2220 ' + (e.rot*180/Math.PI).toFixed(1) + '\u00b0' : '');
+  }
   if (e.t === 'line'){
     var dx = e.x2-e.x1, dy = e.y2-e.y1;
     var ang = Math.atan2(dy,dx)*180/Math.PI;
@@ -3240,6 +3662,7 @@ function selToggle(i){
    Distances: point-point, point-line, line-line (parallel).
    The SECOND-selected entity always moves, translated rigidly. */
 function repPoint(e){
+  if (e.t === 'text')   return {x:e.x, y:e.y};
   if (e.t === 'circle') return {x:e.cx, y:e.cy};
   if (e.t === 'arc')    return {x:e.cx, y:e.cy};
   if (e.t === 'line')   return {x:(e.x1+e.x2)/2, y:(e.y1+e.y2)/2};
@@ -3402,6 +3825,7 @@ function moveEntity(e, dx, dy){
   else if (e.t==='path'){ e.pts.forEach(function(p){ p[0]+=dx; p[1]+=dy; }); e._tess = null; }
   else if (e.t==='poly'){ e.pts.forEach(function(p){ p[0]+=dx; p[1]+=dy; }); }
   else if (e.t==='group'){ e.ents.forEach(function(me){ moveEntity(me, dx, dy); }); }
+  else if (e.t==='text'){ e.x+=dx; e.y+=dy; }
 }
 
 /* ---------------- configurable tool panel ----------------
@@ -3421,6 +3845,8 @@ var ICON = {
  offs:'<svg viewBox="0 0 18 18"><rect x="6" y="6" width="6" height="6"/><rect x="2.5" y="2.5" width="13" height="13" opacity=".5" stroke-dasharray="2.4 2"/></svg>',
  join:'<svg viewBox="0 0 18 18"><path d="M3 14 L8 9"/><path d="M10 7 L15 3"/><circle cx="9" cy="8" r="2.2" opacity=".6"/></svg>',
  dim:'<svg viewBox="0 0 18 18"><path d="M2 5 V13 M16 5 V13"/><path d="M2 9 H16"/><path d="M4.5 7 L2 9 L4.5 11 M13.5 7 L16 9 L13.5 11"/></svg>',
+ text:'<svg viewBox="0 0 18 18"><path d="M3.5 15 L9 3 L14.5 15"/><path d="M5.6 10.6 H12.4"/></svg>',
+ curves:'<svg viewBox="0 0 18 18"><path d="M3 15 L7 4 L11 15"/><path d="M4.6 11 H9.4"/><rect x="1.5" y="13.5" width="3" height="3"/><rect x="5.5" y="2.5" width="3" height="3"/><rect x="9.5" y="13.5" width="3" height="3"/><path d="M13 5 H16.5 M14.75 3.2 V6.8" opacity=".6"/></svg>',
  node:'<svg viewBox="0 0 18 18"><path d="M3 14 L8 6 L12 10 L15.5 4"/><rect x="1.4" y="12.4" width="3.2" height="3.2"/><rect x="6.4" y="4.4" width="3.2" height="3.2"/><rect x="10.4" y="8.4" width="3.2" height="3.2"/><rect x="13.9" y="2.4" width="3.2" height="3.2"/></svg>',
  group:'<svg viewBox="0 0 18 18"><rect x="2.5" y="2.5" width="6" height="6"/><rect x="9.5" y="9.5" width="6" height="6"/><rect x="1" y="1" width="16" height="16" stroke-dasharray="2.5 2" opacity=".55"/></svg>',
  ungroup:'<svg viewBox="0 0 18 18"><rect x="2" y="2" width="6" height="6"/><rect x="10" y="10" width="6" height="6"/><path d="M9.5 4 L15.5 4 M12.5 1.5 L12.5 6.5" opacity=".55"/></svg>',
@@ -3444,6 +3870,8 @@ var PANEL_BTNS = {
  circle:{tool:'circle', icon:'circ', title:'Circle (C) \u2014 center then radius point, or type D5 for diameter'},
  arc:   {tool:'arc', icon:'arc', title:'Arc (A) \u2014 start point, end point, then bow it with the mouse (3-point) or type a radius; + bows left of start\u2192end, \u2212 right'},
  poly:  {tool:'poly', icon:'poly', title:'Polyline (P) \u2014 click points, Enter ends, click start to close'},
+ textT: {tool:'text', icon:'text', title:'Text (K) \u2014 click where the text starts; double-click text later to edit it'},
+ curvesBtn:{id:'curvesBtn', icon:'curves', title:'Convert to curves \u2014 turn selected text into ordinary shapes you can trim, offset and cut'},
  offsetT:{tool:'offset', icon:'offs', title:'Offset (S) \u2014 select or click shapes, then type the distance: + outward, \u2212 inward (open shapes: + is left of travel)'},
  dimT:{tool:'dim', icon:'dim', title:'Dimension (I) \u2014 click one shape for its size, or two shapes for the distance between them. Dimensions stay on the drawing and update themselves; click a value to change it and move the geometry.'},
  nodeT:{tool:'node', icon:'node', title:'Edit nodes (N) \u2014 click a polyline to show its points; drag a point to move it, click a point or segment to type exact values'},
@@ -3469,8 +3897,8 @@ var PANEL_BTNS = {
 };
 var PANEL_GROUPS = [
  {id:'file',   label:'File',           btns:['newBtn','saveBtn','loadBtn']},
- {id:'create', label:'Create Vectors', btns:['select','line','rect','circle','arc','poly']},
- {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','nodeT','dimT','copyT','mirrorT','rotateT','arrayT','groupBtn','ungroupBtn','joinBtn','explodeBtn']},
+ {id:'create', label:'Create Vectors', btns:['select','line','rect','circle','arc','poly','textT']},
+ {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','nodeT','dimT','copyT','mirrorT','rotateT','arrayT','groupBtn','ungroupBtn','joinBtn','explodeBtn','curvesBtn']},
  {id:'guides', label:'Guides',         btns:['guide','clearGuides']},
  {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']}
  /* D1.2 adds: {id:'edit', label:'Edit Vectors', btns:['fillet','trim','extend','offset',...]} */
@@ -3487,6 +3915,8 @@ function uiCfgLoad(){
       if (!UICFG.colors.dim) UICFG.colors.dim = '#8fb8d8';
       if (typeof c.showDims === 'boolean') UICFG.showDims = c.showDims;
       if (c.filletR > 0) UICFG.filletR = c.filletR;
+      if (c.lastFont) UICFG.lastFont = c.lastFont;
+      if (c.lastTextH > 0) UICFG.lastTextH = c.lastTextH;
     }
   }catch(e){}
 }
@@ -3642,6 +4072,11 @@ function wirePanel(){
       toast('info', 'Nothing selected', 'Select shapes to break into separate lines and arcs.');
       stagePrompt('selFirst'); return;
     }
+    if (SEL.some(function(i){ return DOC.ents[i] && DOC.ents[i].t === 'text'; })){
+      var nx = convertTextsToCurves(SEL.slice());
+      if (nx) toast('ok', 'Converted to curves', nx + ' text object' + (nx>1?'s are':' is') + ' now ordinary shapes, grouped per text.');
+      return;
+    }
     if (SEL.some(function(i){ return DOC.ents[i] && DOC.ents[i].t === 'group'; })){
       toast('info', 'That is a group', 'Use Ungroup to break a grouped object apart. Explode breaks a contour into lines and arcs.');
       return;
@@ -3716,6 +4151,80 @@ function wire(){
   }
   function closeSettings(){ settingsModal.hidden = true; }
   document.getElementById('settingsBtn').addEventListener('click', openSettings);
+
+  // ---- text dialog: every change previews live on the canvas ----
+  function txtLive(){
+    if (!TXT) return;
+    var e = TXT.ent;
+    e.str = document.getElementById('txtStr').value;
+    e.font = document.getElementById('txtFont').value;
+    var hv = parseFloat(document.getElementById('txtH').value);
+    if (hv > 0 && isFinite(hv)) e.h = hv;
+    e.align = document.getElementById('txtAlign').value;
+    fontObj(e.font);
+    draw();
+  }
+  ['txtStr','txtH'].forEach(function(id){ document.getElementById(id).addEventListener('input', txtLive); });
+  ['txtFont','txtAlign'].forEach(function(id){ document.getElementById(id).addEventListener('change', txtLive); });
+  document.getElementById('txtOK').addEventListener('click', function(){ txtLive(); closeTextModal(true); });
+  document.getElementById('txtCancel').addEventListener('click', function(){ closeTextModal(false); });
+  document.getElementById('txtCurves').addEventListener('click', function(){
+    txtLive();
+    if (!TXT || !String(TXT.ent.str).trim()){ closeTextModal(true); return; }
+    if (!textLocal(TXT.ent)){ toast('warn', 'Font still loading', 'Wait until the letters appear, then convert.'); return; }
+    var ent = TXT.ent;
+    closeTextModal(true);
+    UNDO.pop();                                   // fold the convert into the same undo step
+    var n = convertTextsToCurves([DOC.ents.indexOf(ent)]);
+    if (n) toast('ok', 'Placed as curves', 'The text is now ordinary shapes, grouped together. It can be trimmed, offset and cut, but not edited as text.');
+  });
+  document.getElementById('textPanel').addEventListener('keydown', function(e){
+    if (e.key === 'Escape'){ e.preventDefault(); closeTextModal(false); }
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); txtLive(); closeTextModal(true); }
+    e.stopPropagation();
+  });
+  document.getElementById('txtLoadFont').addEventListener('click', function(){ document.getElementById('fontFile').click(); });
+  document.getElementById('fontFile').addEventListener('change', function(ev){
+    var f = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!f) return;
+    if (typeof opentype === 'undefined'){
+      toast('err', 'Text engine didn\u2019t load', 'Reload the page while online, then try the font again.');
+      return;
+    }
+    var rd = new FileReader();
+    rd.onload = function(){
+      try{
+        var key = registerCustomFont(rd.result, true);
+        refreshFontSelect(key);
+        txtLive();
+        toast('ok', 'Font added', FONTS[key].name + ' is saved in this browser, so it will be here next time.');
+      }catch(err){
+        toast('err', 'That font file couldn\u2019t be read', 'Use a .ttf, .otf or .woff file. The newer .woff2 format isn\u2019t supported.');
+      }
+    };
+    rd.readAsArrayBuffer(f);
+  });
+
+  // ---- convert selected text to curves ----
+  document.getElementById('curvesBtn').addEventListener('click', function(){
+    var n = convertTextsToCurves(SEL.slice());
+    if (n) toast('ok', 'Converted to curves', n + ' text object' + (n>1?'s are':' is') + ' now ordinary shapes, grouped per text. They can be trimmed, offset and cut, but not edited as text.');
+    else if (!SEL.some(function(i){ return DOC.ents[i] && DOC.ents[i].t === 'text'; }))
+      toast('info', 'Select text first', 'Convert to curves turns selected text into shapes. Select one or more text objects, then press it.');
+  });
+
+  // ---- double-click text (Select tool) to edit it ----
+  cv.addEventListener('dblclick', function(ev){
+    if (TOOL !== 'select') return;
+    var r0 = cv.getBoundingClientRect();
+    var w0 = s2w(ev.clientX - r0.left, ev.clientY - r0.top);
+    var h0 = pickEntity(w0);
+    if (h0 !== null && DOC.ents[h0].t === 'text') openTextModal(h0);
+  });
+
+  // fonts the user loaded before come back from browser storage
+  loadCachedFonts();
   document.getElementById('settingsDone').addEventListener('click', closeSettings);
   settingsModal.addEventListener('pointerdown', function(e){ if (e.target === settingsModal) closeSettings(); });
 
@@ -3956,10 +4465,7 @@ function wire(){
     // of a numeric entry). This lets you go fillet -> type radius -> press T for trim without
     // having to click away from the field first. Only when the field holds no partial number.
     var k = e.key.toLowerCase();
-    // fillet arms its radius live, so its value is already committed — a hotkey may switch even with
-    // a number showing. Other tools may be mid coordinate entry, so only switch when no partial number.
-    var canSwitch = (TOOL === 'fillet') || !/[0-9.\-]/.test(pin.value);
-    if (TOOL_HOTKEYS[k] && e.key.length === 1 && !e.ctrlKey && !e.altKey && canSwitch){
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && letterIsHotkey(k, pin.value)){
       pin.value = ''; pin.blur();
       setTool(TOOL_HOTKEYS[k]);
       e.preventDefault(); e.stopPropagation();
@@ -3980,7 +4486,8 @@ function wire(){
 
   // global keys: type-to-enter numbers, tool hotkeys, editing
   window.addEventListener('keydown', function(e){
-    var inField = e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT';
+    if (!document.getElementById('textModal').hidden) return;   // the text dialog owns the keyboard
+    var inField = e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA';
     // Ctrl-combos are global: they work from anywhere, including while an input has focus,
     // and regardless of whether a tool is mid-operation.
     if (e.ctrlKey && !e.altKey){
@@ -4062,13 +4569,12 @@ function wire(){
       });
       persist(); draw(); return;
     }
-    var toolBusy = (TOOL !== 'select') && (DRAW !== null || document.getElementById('promptBar').classList.contains('on'));
-    if (!toolBusy){
-      if (TOOL_HOTKEYS[e.key.toLowerCase()] && !e.ctrlKey){ setTool(TOOL_HOTKEYS[e.key.toLowerCase()]); return; }
-    }
     // if the entry field already has focus, let ITS handler own typing and Enter
     var pinEl = document.getElementById('promptIn');
     if (document.activeElement === pinEl) return;
+    if (!e.ctrlKey && !e.altKey && e.key.length === 1 && letterIsHotkey(e.key.toLowerCase(), pinEl.value)){
+      setTool(TOOL_HOTKEYS[e.key.toLowerCase()]); return;
+    }
     // any printable char while a tool is live routes into the entry bar
     if (TOOL !== 'select' && e.key.length === 1 && !e.ctrlKey && !e.altKey){
       document.getElementById('promptBar').classList.add('on');
