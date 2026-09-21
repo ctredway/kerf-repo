@@ -129,6 +129,8 @@
       <div class="srow"><input type="color" id="colVec"><label for="colVec">Vectors</label></div>
       <div class="srow"><input type="color" id="colTp"><label for="colTp">Toolpath previews</label></div>
       <div class="srow"><input type="color" id="colCon"><label for="colCon">Construction</label></div>
+      <div class="srow"><input type="color" id="colDim"><label for="colDim">Dimensions</label></div>
+      <div class="srow"><input type="checkbox" id="showDims"><label for="showDims">Show dimensions layer</label></div>
       <div class="srow" style="margin-top:14px"><button id="settingsDone" class="primary">Done</button></div>
     </div>
   </div>
@@ -179,7 +181,7 @@
 
 <script>
 'use strict';
-var DESIGN_VERSION = '0.33.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.34.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -187,7 +189,86 @@ var DESIGN_VERSION = '0.33.0'; // bump on every build — shown in the header
    Guides:   {t:'gline',a,b,c}  (ax+by=c, normalized)  — construction only
    All units mm. Y up. Screen transform flips Y.
    ============================================================ */
-var DOC = {stock:{w:200,h:120,origin:'corner'}, ents:[], guides:[]};
+var DOC = {stock:{w:200,h:120,origin:'corner'}, ents:[], guides:[], dims:[]};
+/* ---------------- dimensions (associative annotation layer) ----------------
+   A dimension stores WHICH entities it measures (by stable id), not a number, so it
+   re-reads the geometry every frame and can never go stale. Editing its value drives
+   the geometry through the same relApply/entApply paths the D-key uses. */
+var ENT_SEQ = 1;
+function entId(e){                       // lazily assign a stable id
+  if (!e) return null;
+  if (!e._id) e._id = 'e' + (ENT_SEQ++);
+  return e._id;
+}
+function entById(id){
+  for (var i = 0; i < DOC.ents.length; i++) if (DOC.ents[i]._id === id) return DOC.ents[i];
+  return null;
+}
+function dimsArr(){ if (!DOC.dims) DOC.dims = []; return DOC.dims; }
+// current measured value of a dimension, or null if its references are gone
+function dimValue(d){
+  if (d.kind === 'pair'){
+    var a = entById(d.a), b = entById(d.b);
+    if (!a || !b) return null;
+    var r = relInfo(a, b);
+    if (r.kind !== 'dist') return null;
+    var v = r.cur;
+    if (d.edge){ var rad = relRadius(a, b); if (rad > 0) v = Math.max(0, v - rad); }
+    return v;
+  }
+  var e = entById(d.a);
+  if (!e) return null;
+  if (d.kind === 'len'  && e.t === 'line')   return Math.hypot(e.x2-e.x1, e.y2-e.y1);
+  if (d.kind === 'dia'  && e.t === 'circle') return e.r*2;
+  if (d.kind === 'rad'  && (e.t === 'circle' || e.t === 'arc')) return e.r;
+  return null;
+}
+// where to draw it: midpoint between the two references (or the entity's own middle)
+function dimAnchor(d){
+  if (d.kind === 'pair'){
+    var a = entById(d.a), b = entById(d.b);
+    if (!a || !b) return null;
+    var pa = repPoint(a), pb = repPoint(b);
+    return {x:(pa.x+pb.x)/2, y:(pa.y+pb.y)/2, a:pa, b:pb};
+  }
+  var e = entById(d.a);
+  if (!e) return null;
+  var pt = repPoint(e);
+  return {x:pt.x, y:pt.y, a:pt, b:pt};
+}
+function dimLabel(d){
+  var v = dimValue(d);
+  if (v === null) return null;
+  if (d.kind === 'dia') return '\u00d8' + v.toFixed(2);
+  if (d.kind === 'rad') return 'R' + v.toFixed(2);
+  if (d.kind === 'pair' && d.edge) return v.toFixed(2) + ' (edge)';
+  return v.toFixed(2);
+}
+// apply a typed value: drives the geometry
+function dimApply(d, v){
+  if (v <= 0 || !isFinite(v)) return false;
+  if (d.kind === 'pair'){
+    var a = entById(d.a), b = entById(d.b);
+    if (!a || !b) return false;
+    return relApply(a, b, v, d.edge);
+  }
+  var e = entById(d.a);
+  if (!e) return false;
+  if (d.kind === 'len' && e.t === 'line'){
+    var L = Math.hypot(e.x2-e.x1, e.y2-e.y1);
+    if (L < 1e-9) return false;
+    e.x2 = e.x1 + (e.x2-e.x1)/L*v; e.y2 = e.y1 + (e.y2-e.y1)/L*v;
+    return true;
+  }
+  if (d.kind === 'dia' && e.t === 'circle'){ e.r = v/2; return true; }
+  if (d.kind === 'rad' && (e.t === 'circle' || e.t === 'arc')){ e.r = v; return true; }
+  return false;
+}
+function addDim(d){
+  dimsArr().push(d);
+  persist();
+  return d;
+}
 var VIEW = {scale:3, ox:0, oy:0}; // screen px per mm; ox/oy = screen pos of (0,0)
 var UNDO = [], REDO = [];
 var TOOL = 'select';
@@ -428,6 +509,9 @@ var STAGE_LABEL = {
   trim0:  'Trim \u2014 click the piece to remove (lines, arcs, circles); crossings bound the cut',
   extend0:'Extend \u2014 click near the end of a line or arc to run it to the next crossing',
   node0:  'Edit nodes \u2014 click a polyline or path to show its points',
+  dim0:   'Dimension \u2014 click a shape for its size, or two shapes for the distance between them \u00b7 click an existing value to edit it',
+  dim1:   'Dimension \u2014 now click the second shape (or click the first again for its own size)',
+  dimEditV:'Dimension \u2014 type the new value; the geometry moves to match',
   node1:  'Edit nodes \u2014 drag a point to move it \u00b7 click a point to type exact X,Y \u00b7 click a segment to type its length \u00b7 Esc when done',
   nodeXY: 'Point \u2014 type exact "x,y"',
   nodeLen:'Segment \u2014 type its length (the later point moves along the segment direction)',
@@ -465,6 +549,7 @@ var TOOLS = {
   trim:  {kind:'edit',   prompt:'trim0',   hover:hoverTrim},
   extend:{kind:'edit',   prompt:'extend0', hover:hoverExtend},
   node:  {kind:'edit',   prompt:'node0',   hover:hoverNode},
+  dim:   {kind:'edit',   prompt:'dim0',    hover:hoverDim},
   offset:{kind:'transform', prompt:'offset0', keepSel:true},
   copy:  {kind:'transform', prompt:'copy0',   keepSel:true},
   mirror:{kind:'transform', prompt:'mirror0', keepSel:true},
@@ -517,6 +602,7 @@ function hoverExtend(w){
   return {action:'none', hint:'extend needs a line or arc'};
 }
 var HOVER = null; // last computed hover status, for cursor feedback in draw()
+var DIMSEL = null; // index of the dimension under edit, if any
 var NODE = null;  // {ent:index, drag:vertexIndex|null} while the node tool has a shape open
 function nodePtsOf(e){
   // uniform [x,y,bulge] view of an editable entity, or null
@@ -524,6 +610,20 @@ function nodePtsOf(e){
   if (e.t === 'poly') return e.pts.map(function(q){ return [q[0], q[1], 0]; });
   if (e.t === 'path') return e.pts.map(function(q){ return [q[0], q[1], q[2]||0]; });
   return null;
+}
+function hoverDim(w){
+  // hovering an existing dimension label?
+  if (UICFG.showDims && DOC.dims){
+    var sp = w2s(w.x, w.y);
+    for (var i = 0; i < DOC.dims.length; i++){
+      var h = DOC.dims[i]._hit;
+      if (h && Math.abs(sp.x-h.x) < h.w/2 && Math.abs(sp.y-h.y) < h.h/2)
+        return {action:'do', hint:'edit this dimension'};
+    }
+  }
+  var idx = pickEntity(w);
+  if (idx === null) return {action:'none'};
+  return {action:'do', hint: DRAW && DRAW.stage === 'dimPick2' ? 'second shape' : 'dimension this', idx:idx};
 }
 function hoverNode(w){
   if (NODE && DOC.ents[NODE.ent]){
@@ -546,7 +646,7 @@ var doGroupSelectionRef = function(){}, doUngroupSelectionRef = function(){};
 // Single source of truth for tool hotkeys — both the canvas handler and the entry field use this.
 var TOOL_HOTKEYS = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide',
                     f:'fillet', t:'trim', e:'extend', d:'copy', m:'mirror', o:'rotate',
-                    s:'offset', n:'node', y:'array'};
+                    s:'offset', n:'node', y:'array', i:'dim'};
 
 function toolMgrEnter(t){
   var desc = TOOLS[t] || TOOLS.select;
@@ -670,6 +770,47 @@ function toolClick(w, snap){
     if (!SEL.length){ stagePrompt('selFirst'); }
     else if (!DRAW){ DRAW = {stage:1, cx:p.x, cy:p.y}; stagePrompt('array1'); }
   }
+  else if (TOOL === 'dim'){
+    // clicking an existing dimension label opens it for editing
+    if (UICFG.showDims && DOC.dims){
+      var spD = w2s(w.x, w.y);
+      for (var dh = 0; dh < DOC.dims.length; dh++){
+        var hh = DOC.dims[dh]._hit;
+        if (hh && Math.abs(spD.x-hh.x) < hh.w/2 && Math.abs(spD.y-hh.y) < hh.h/2){
+          DIMSEL = dh;
+          DRAW = {stage:'dimValue', di:dh};
+          var cv0 = dimValue(DOC.dims[dh]);
+          showPrompt(STAGE_LABEL.dimEditV, cv0 === null ? '' : cv0.toFixed(2), true);
+          draw(); return;
+        }
+      }
+    }
+    var hitD = pickEntity(w);
+    if (hitD === null){ DRAW = null; DIMSEL = null; stagePrompt('dim0'); draw(); return; }
+    if (!DRAW || DRAW.stage !== 'dimPick2'){
+      DRAW = {stage:'dimPick2', first:hitD};
+      stagePrompt('dim1');
+    } else {
+      var e1 = DOC.ents[DRAW.first], e2 = DOC.ents[hitD];
+      if (DRAW.first === hitD){
+        // same shape twice: dimension the shape itself
+        var kind = e1.t === 'circle' ? 'dia' : (e1.t === 'arc' ? 'rad' : (e1.t === 'line' ? 'len' : null));
+        if (kind){ addDim({kind:kind, a:entId(e1)}); toast('ok','Dimension added','It updates itself when the shape changes. Click the value to edit it.'); }
+        else toast('info','No size dimension for that shape','Try two shapes for a distance, or use a line, circle or arc.');
+      } else {
+        var rr = relInfo(e1, e2);
+        if (rr.kind === 'dist'){
+          addDim({kind:'pair', a:entId(e1), b:entId(e2), edge:false});
+          toast('ok','Dimension added','Distance between the two shapes. Click the value to change it \u2014 the second shape moves.');
+        } else if (rr.kind === 'angle'){
+          toast('warn','Not parallel','A distance needs parallel lines (they are ' + rr.cur.toFixed(1) + '\u00b0 apart).');
+        } else {
+          toast('warn','No dimension for that pair','Try a circle/line, or two parallel lines.');
+        }
+      }
+      DRAW = null; stagePrompt('dim0');
+    }
+  }
   else if (TOOL === 'node'){
     var tolv = 8/VIEW.scale;
     if (NODE && DOC.ents[NODE.ent]){
@@ -768,7 +909,10 @@ function toolCommitText(txt){
     var vv = parseFloat(rawT.replace(/[eE]/g, ''));
     if (isNaN(vv) || vv <= 0) return;
     pushUndo();
-    if (relApply(ea, eb, vv, wantEdge)){ DRAW = null; hidePrompt(); persist(); draw(); updateReadout(); }
+    var _leaveDim = true;   // D-key edits also drop a persistent dimension (user asked for both)
+    if (relApply(ea, eb, vv, wantEdge)){
+      if (_leaveDim && !dimsArr().some(function(x){ return x.kind==='pair' && x.a===entId(ea) && x.b===entId(eb); }))
+        addDim({kind:'pair', a:entId(ea), b:entId(eb), edge:!!wantEdge}); DRAW = null; hidePrompt(); persist(); draw(); updateReadout(); }
     else UNDO.pop();
     return;
   }
@@ -945,6 +1089,23 @@ function toolCommitText(txt){
         DRAW = null; stagePrompt('array0'); persist(); draw();
       }
       return;
+    }
+    return;
+  }
+  if (DRAW && DRAW.stage === 'dimValue'){
+    var dd = DOC.dims[DRAW.di];
+    if (!dd){ DRAW = null; DIMSEL = null; hidePrompt(); return; }
+    var rawD = txt.trim();
+    var wantEdgeD = /^[eE]/.test(rawD) || /[eE]$/.test(rawD);
+    var vD = parseFloat(rawD.replace(/[eE]/g, ''));
+    if (isNaN(vD) || vD <= 0) return;
+    if (wantEdgeD && dd.kind === 'pair') dd.edge = true;
+    pushUndo();
+    if (dimApply(dd, vD)){
+      DRAW = null; DIMSEL = null; stagePrompt('dim0'); persist(); draw();
+      toast('ok', 'Dimension applied', 'Geometry moved to match ' + vD.toFixed(2) + '.');
+    } else {
+      toast('warn', 'Could not apply that', 'The dimension could not drive this geometry.');
     }
     return;
   }
@@ -1700,6 +1861,50 @@ function draw(){
   }
 
   // snap marker
+  // ---- dimension layer ----
+  if (UICFG.showDims && DOC.dims && DOC.dims.length){
+    ctx.save();
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    DOC.dims.forEach(function(d, di){
+      var lab = dimLabel(d), anc = dimAnchor(d);
+      if (lab === null || !anc) return;           // broken reference: skip (flagged below)
+      var isSelD = (DIMSEL === di);
+      ctx.strokeStyle = isSelD ? '#ffc96b' : UICFG.colors.dim;
+      ctx.fillStyle   = isSelD ? '#ffc96b' : UICFG.colors.dim;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      if (d.kind === 'pair'){
+        // witness line between the two referenced points, with end ticks
+        var pa = w2s(anc.a.x, anc.a.y), pb = w2s(anc.b.x, anc.b.y);
+        ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+        [pa, pb].forEach(function(q){
+          ctx.beginPath(); ctx.moveTo(q.x-3, q.y-3); ctx.lineTo(q.x+3, q.y+3);
+          ctx.moveTo(q.x-3, q.y+3); ctx.lineTo(q.x+3, q.y-3); ctx.stroke();
+        });
+      }
+      // label with a small backing plate so it stays readable over geometry
+      var lp = w2s(anc.x, anc.y);
+      var offY = d.off || -14;
+      var tw = ctx.measureText(lab).width;
+      ctx.save();
+      ctx.fillStyle = 'rgba(20,24,29,0.85)';
+      ctx.fillRect(lp.x - tw/2 - 4, lp.y + offY - 8, tw + 8, 16);
+      ctx.restore();
+      ctx.fillStyle = isSelD ? '#ffc96b' : UICFG.colors.dim;
+      ctx.fillText(lab, lp.x, lp.y + offY);
+      d._hit = {x:lp.x, y:lp.y + offY, w:tw + 8, h:16};   // for click-to-edit
+    });
+    // broken dimensions (referenced entity deleted) get a red marker at the doc origin area
+    var broken = DOC.dims.filter(function(d){ return dimLabel(d) === null; }).length;
+    if (broken){
+      ctx.fillStyle = '#e06c5a';
+      ctx.textAlign = 'left';
+      ctx.fillText(broken + ' dimension' + (broken>1?'s':'') + ' lost its reference', 12, 18);
+    }
+    ctx.restore();
+  }
+
   // node editing: draw vertex handles and label every segment of the open shape
   if (TOOL === 'node' && NODE && DOC.ents[NODE.ent]){
     var ne3 = DOC.ents[NODE.ent], np = nodePtsOf(ne3);
@@ -3215,6 +3420,7 @@ var ICON = {
  array:'<svg viewBox="0 0 18 18"><circle cx="4.5" cy="4.5" r="1.7"/><circle cx="11" cy="4.5" r="1.7"/><circle cx="4.5" cy="11" r="1.7"/><circle cx="11" cy="11" r="1.7" opacity=".45"/></svg>',
  offs:'<svg viewBox="0 0 18 18"><rect x="6" y="6" width="6" height="6"/><rect x="2.5" y="2.5" width="13" height="13" opacity=".5" stroke-dasharray="2.4 2"/></svg>',
  join:'<svg viewBox="0 0 18 18"><path d="M3 14 L8 9"/><path d="M10 7 L15 3"/><circle cx="9" cy="8" r="2.2" opacity=".6"/></svg>',
+ dim:'<svg viewBox="0 0 18 18"><path d="M2 5 V13 M16 5 V13"/><path d="M2 9 H16"/><path d="M4.5 7 L2 9 L4.5 11 M13.5 7 L16 9 L13.5 11"/></svg>',
  node:'<svg viewBox="0 0 18 18"><path d="M3 14 L8 6 L12 10 L15.5 4"/><rect x="1.4" y="12.4" width="3.2" height="3.2"/><rect x="6.4" y="4.4" width="3.2" height="3.2"/><rect x="10.4" y="8.4" width="3.2" height="3.2"/><rect x="13.9" y="2.4" width="3.2" height="3.2"/></svg>',
  group:'<svg viewBox="0 0 18 18"><rect x="2.5" y="2.5" width="6" height="6"/><rect x="9.5" y="9.5" width="6" height="6"/><rect x="1" y="1" width="16" height="16" stroke-dasharray="2.5 2" opacity=".55"/></svg>',
  ungroup:'<svg viewBox="0 0 18 18"><rect x="2" y="2" width="6" height="6"/><rect x="10" y="10" width="6" height="6"/><path d="M9.5 4 L15.5 4 M12.5 1.5 L12.5 6.5" opacity=".55"/></svg>',
@@ -3239,6 +3445,7 @@ var PANEL_BTNS = {
  arc:   {tool:'arc', icon:'arc', title:'Arc (A) \u2014 start point, end point, then bow it with the mouse (3-point) or type a radius; + bows left of start\u2192end, \u2212 right'},
  poly:  {tool:'poly', icon:'poly', title:'Polyline (P) \u2014 click points, Enter ends, click start to close'},
  offsetT:{tool:'offset', icon:'offs', title:'Offset (S) \u2014 select or click shapes, then type the distance: + outward, \u2212 inward (open shapes: + is left of travel)'},
+ dimT:{tool:'dim', icon:'dim', title:'Dimension (I) \u2014 click one shape for its size, or two shapes for the distance between them. Dimensions stay on the drawing and update themselves; click a value to change it and move the geometry.'},
  nodeT:{tool:'node', icon:'node', title:'Edit nodes (N) \u2014 click a polyline to show its points; drag a point to move it, click a point or segment to type exact values'},
  groupBtn:{id:'groupBtn', icon:'group', title:'Group (G) \u2014 bundle the selected vectors into one object. All geometry is kept; it just selects and moves as one piece.'},
  ungroupBtn:{id:'ungroupBtn', icon:'ungroup', title:'Ungroup (U) \u2014 break a group back into its separate vectors'},
@@ -3263,12 +3470,12 @@ var PANEL_BTNS = {
 var PANEL_GROUPS = [
  {id:'file',   label:'File',           btns:['newBtn','saveBtn','loadBtn']},
  {id:'create', label:'Create Vectors', btns:['select','line','rect','circle','arc','poly']},
- {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','nodeT','copyT','mirrorT','rotateT','arrayT','groupBtn','ungroupBtn','joinBtn','explodeBtn']},
+ {id:'edit',   label:'Edit Vectors',   btns:['fillet','trim','extend','offsetT','nodeT','dimT','copyT','mirrorT','rotateT','arrayT','groupBtn','ungroupBtn','joinBtn','explodeBtn']},
  {id:'guides', label:'Guides',         btns:['guide','clearGuides']},
  {id:'view',   label:'View & History', btns:['fitBtn2','undoBtn','redoBtn']}
  /* D1.2 adds: {id:'edit', label:'Edit Vectors', btns:['fillet','trim','extend','offset',...]} */
 ];
-var UICFG = {order:null, collapsed:{}, colors:{vec:'#dce3ea', tp:'#b87f2e', con:'#6b8cae'}, filletR:3};
+var UICFG = {order:null, collapsed:{}, colors:{vec:'#dce3ea', tp:'#b87f2e', con:'#6b8cae', dim:'#8fb8d8'}, filletR:3, showDims:true};
 function uiCfgLoad(){
   try{
     var c = JSON.parse(localStorage.getItem('d454DesignUI') || localStorage.getItem('kerfDesignUI') || 'null');
@@ -3277,6 +3484,8 @@ function uiCfgLoad(){
       UICFG.collapsed = c.collapsed || {};
       if (c.colors && c.colors.vec && c.colors.tp) UICFG.colors = c.colors;
       if (!UICFG.colors.con) UICFG.colors.con = '#6b8cae';
+      if (!UICFG.colors.dim) UICFG.colors.dim = '#8fb8d8';
+      if (typeof c.showDims === 'boolean') UICFG.showDims = c.showDims;
       if (c.filletR > 0) UICFG.filletR = c.filletR;
     }
   }catch(e){}
@@ -3445,6 +3654,7 @@ function wirePanel(){
     pushUndo();
     DOC.ents = [];
     DOC.guides = [];
+    DOC.dims = [];
     SEL.length = 0;
     setTool('select');
     persist();
@@ -3480,7 +3690,12 @@ function wire(){
     });
   });
   // display colors (now in the Settings modal, wired once)
-  [['colVec','vec'],['colTp','tp'],['colCon','con']].forEach(function(pair){
+  var sd = document.getElementById('showDims');
+  if (sd){
+    sd.checked = UICFG.showDims !== false;
+    sd.addEventListener('change', function(){ UICFG.showDims = sd.checked; uiCfgSave(); draw(); });
+  }
+  [['colVec','vec'],['colTp','tp'],['colCon','con'],['colDim','dim']].forEach(function(pair){
     var inp = document.getElementById(pair[0]);
     if (!inp) return;
     inp.value = UICFG.colors[pair[1]];
@@ -3821,7 +4036,12 @@ function wire(){
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && SEL.length){
       pushUndo();
+      var goneIds = SEL.map(function(si){ return DOC.ents[si] && DOC.ents[si]._id; }).filter(Boolean);
       SEL.slice().sort(function(a,b){return b-a;}).forEach(function(si){ DOC.ents.splice(si,1); });
+      // drop dimensions whose references just disappeared
+      if (DOC.dims) DOC.dims = DOC.dims.filter(function(d){
+        return goneIds.indexOf(d.a) < 0 && (d.b === undefined || goneIds.indexOf(d.b) < 0);
+      });
       SEL=[]; persist(); draw(); return;
     }
     if (SEL.length && (e.key.indexOf('Arrow') === 0)){
