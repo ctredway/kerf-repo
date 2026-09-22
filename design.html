@@ -147,6 +147,10 @@
   #toolPanel2 .tdFoot{display:flex;gap:8px;justify-content:flex-end;padding:10px 18px;border-top:1px solid var(--line)}
   .tpToolBtn{display:block;width:100%;text-align:left;background:none;border:0;border-radius:3px;padding:0;margin-top:3px;font:inherit;font-size:11.5px;color:var(--muted);cursor:pointer;line-height:1.4}
   .tpToolBtn:hover{color:var(--ink);text-decoration:underline}
+  .modalHead{display:flex;align-items:flex-start;gap:10px}
+  .modalHead h3{flex:1;margin:0}
+  .modalX{background:none;border:0;padding:0 2px;color:var(--muted);font-size:15px;line-height:1;cursor:pointer;flex:none}
+  .modalX:hover{color:var(--ink)}
   #libModal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:210}
   #libModal[hidden]{display:none}
   #libPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;width:min(980px,94vw);height:min(680px,88vh);display:flex;flex-direction:column;box-shadow:0 14px 48px rgba(0,0,0,.55)}
@@ -252,7 +256,7 @@
 
   <div id="nestModal" hidden>
     <div id="nestPanel" role="dialog" aria-labelledby="nestTitle">
-      <h3 id="nestTitle">Nest parts</h3>
+      <div class="modalHead"><h3 id="nestTitle">Nest parts</h3><button class="modalX" id="nestX" title="Close (Esc)" aria-label="Close">✕</button></div>
       <p class="snote" id="nestSummary"></p>
       <div id="nestList"></div>
       <div class="srow">
@@ -274,7 +278,7 @@
 
   <div id="textModal" hidden>
     <div id="textPanel" role="dialog" aria-labelledby="textTitle">
-      <h3 id="textTitle">Add text</h3>
+      <div class="modalHead"><h3 id="textTitle">Add text</h3><button class="modalX" id="textX" title="Close (Esc)" aria-label="Close">✕</button></div>
       <textarea id="txtStr" rows="3" spellcheck="false" placeholder="Type your text"></textarea>
       <div class="srow">
         <label for="txtFont">Font</label>
@@ -300,7 +304,7 @@
 
   <div id="settingsModal" hidden>
     <div id="settingsPanel">
-      <h3>Settings</h3>
+      <div class="modalHead"><h3>Settings</h3><button class="modalX" id="setX" title="Close (Esc)" aria-label="Close">✕</button></div>
       <h4>Material / stock</h4>
       <div class="srow">
         <label for="stkW">Width</label><input type="text" inputmode="decimal" id="stkW" autocomplete="off">
@@ -389,7 +393,7 @@
 
   <div id="impModal" hidden>
     <div id="impPanel">
-      <h3 id="impTitle">Import VCarve file</h3>
+      <div class="modalHead"><h3 id="impTitle">Import VCarve file</h3><button class="modalX" id="impX" title="Close (Esc)" aria-label="Close">✕</button></div>
       <div class="row"><span id="impStock" style="color:var(--muted)"></span></div>
       <div class="row impCrvRow"><input type="checkbox" id="impDrawing" checked><label for="impDrawing" id="impDrawingLbl">Drawing vectors</label></div>
       <div class="row impCrvRow"><input type="checkbox" id="impPreview"><label for="impPreview" id="impPreviewLbl">Toolpath preview vectors</label></div>
@@ -427,7 +431,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.51.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.51.1'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -6245,11 +6249,15 @@ function wire(){
   // fonts the user loaded before come back from browser storage
   loadCachedFonts();
   document.getElementById('settingsDone').addEventListener('click', closeSettings);
+  document.getElementById('setX').addEventListener('click', closeSettings);
+  document.getElementById('nestX').addEventListener('click', closeNestDialog);
+  document.getElementById('textX').addEventListener('click', function(){ closeTextModal(false); });
   settingsModal.addEventListener('pointerdown', function(e){ if (e.target === settingsModal) closeSettings(); });
 
   var IMP = {ex: null};
   function impClose(){ document.getElementById('impModal').hidden = true; IMP.ex = null; IMP.dxf = null; IMP.mode = null; }
   document.getElementById('impCancel').addEventListener('click', impClose);
+  document.getElementById('impX').addEventListener('click', impClose);
   document.getElementById('impModal').addEventListener('pointerdown', function(e){
     if (e.target === e.currentTarget) impClose();
   });
