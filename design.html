@@ -76,6 +76,7 @@
   #settingsPanel .srow label{font-size:13px;color:var(--muted)}
   #settingsPanel .srow .unit{font-size:12px;color:var(--muted)}
   #settingsPanel input[type=number]{width:70px}
+  #stkW,#stkH{width:74px;font-family:var(--mono)}
   #settingsPanel input[type=color]{width:38px;height:24px;padding:0;border:1px solid var(--line);border-radius:4px;background:none;cursor:pointer}
   #nestModal{position:fixed;inset:0;background:rgba(0,0,0,0.12);display:flex;align-items:flex-start;justify-content:flex-end;padding:72px 24px 0 0;z-index:200}
   #nestModal[hidden]{display:none}
@@ -294,9 +295,11 @@
       <h3>Settings</h3>
       <h4>Material / stock</h4>
       <div class="srow">
-        <label>Width</label><input type="number" id="stkW" value="200" step="1"> <span class="unit">mm</span>
-        <label style="margin-left:10px">Height</label><input type="number" id="stkH" value="120" step="1"> <span class="unit">mm</span>
+        <label for="stkW">Width</label><input type="text" inputmode="decimal" id="stkW" autocomplete="off">
+        <label for="stkH" style="margin-left:10px">Height</label><input type="text" inputmode="decimal" id="stkH" autocomplete="off">
+        <select id="stkUnits" aria-label="Units for the material size"><option value="mm">mm</option><option value="in">in</option></select>
       </div>
+      <p class="snote" id="stkEq"></p>
       <div class="srow">
         <label>Job zero</label>
         <select id="stkOrigin">
@@ -415,7 +418,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.44.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.44.1'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -3030,10 +3033,35 @@ function setMsgPanel(open){
 function persist(){
   try{ localStorage.setItem('d454Design', JSON.stringify(DOC)); }catch(e){}
 }
+// Material is often sold in inches even when the work is metric, so its size can be entered
+// in either. The drawing always stays in millimetres.
+function stockUnits(){ return UICFG.stockUnits === 'in' ? 'in' : 'mm'; }
+function fmtStockLen(mm, u){
+  if (u === 'in') return libFraction(mm / 25.4 + 1e-12);   // 304.8 -> "12", 12.7 -> "1/2", else decimals
+  return String(+mm.toFixed(3));
+}
+// "12", "12.5", "12 1/2", "12-1/2", "3/4"; a trailing mm, in or " overrides the chosen units
+function parseStockLen(txt, u){
+  var t = String(txt).trim().toLowerCase();
+  var m = /^(.*?)\s*(mm|in|"|″)$/.exec(t);
+  if (m){ t = m[1].trim(); u = m[2] === 'mm' ? 'mm' : 'in'; }
+  var v = NaN, mm2;
+  if ((mm2 = /^(\d+(?:\.\d+)?)\s*[- ]\s*(\d+)\s*\/\s*(\d+)$/.exec(t))) v = +mm2[1] + mm2[2] / mm2[3];
+  else if ((mm2 = /^(\d+)\s*\/\s*(\d+)$/.exec(t))) v = mm2[1] / mm2[2];
+  else if (/^\d*\.?\d+$/.test(t)) v = parseFloat(t);
+  if (!(v > 0) || !isFinite(v)) return NaN;
+  return u === 'in' ? v * 25.4 : v;
+}
 function syncStockUI(){
-  document.getElementById('stkW').value = DOC.stock.w;
-  document.getElementById('stkH').value = DOC.stock.h;
+  var u = stockUnits();
+  document.getElementById('stkUnits').value = u;
+  document.getElementById('stkW').value = fmtStockLen(DOC.stock.w, u);
+  document.getElementById('stkH').value = fmtStockLen(DOC.stock.h, u);
   document.getElementById('stkOrigin').value = DOC.stock.origin;
+  var eq = document.getElementById('stkEq');
+  eq.textContent = u === 'in'
+    ? '= ' + DOC.stock.w.toFixed(2) + ' \u00d7 ' + DOC.stock.h.toFixed(2) + ' mm in the drawing. Fractions work: 12 1/2 or 3/4.'
+    : '= ' + (DOC.stock.w / 25.4).toFixed(3) + ' \u00d7 ' + (DOC.stock.h / 25.4).toFixed(3) + ' in';
 }
 function restore(){ // startup ONLY: pulls the persisted doc. Never call after setting DOC.
   try{
@@ -5687,6 +5715,7 @@ function uiCfgLoad(){
       if (c.nestGap >= 0) UICFG.nestGap = c.nestGap;
       if (c.nestMargin >= 0) UICFG.nestMargin = c.nestMargin;
       if (c.nestRot) UICFG.nestRot = c.nestRot;
+      if (c.stockUnits === 'in' || c.stockUnits === 'mm') UICFG.stockUnits = c.stockUnits;
       if (typeof c.tpPanel === 'boolean') UICFG.tpPanel = c.tpPanel;
       if (c.libMachine) UICFG.libMachine = c.libMachine;
       if (typeof c.libMaterial === 'string') UICFG.libMaterial = c.libMaterial;
@@ -5901,11 +5930,19 @@ function wire(){
 
   ['stkW','stkH','stkOrigin'].forEach(function(id){
     document.getElementById(id).addEventListener('change', function(){
-      DOC.stock.w = parseFloat(document.getElementById('stkW').value) || 200;
-      DOC.stock.h = parseFloat(document.getElementById('stkH').value) || 120;
+      var u = stockUnits();
+      var w = parseStockLen(document.getElementById('stkW').value, u), h = parseStockLen(document.getElementById('stkH').value, u);
+      if (!(w > 0) || !(h > 0)){
+        toast('warn', 'Check the material size', 'Use a number greater than zero, like 12, 12.5 or 12 1/2.');
+        syncStockUI(); return;                          // put the last good values back
+      }
+      DOC.stock.w = w; DOC.stock.h = h;
       DOC.stock.origin = document.getElementById('stkOrigin').value;
-      persist(); fit();
+      syncStockUI(); persist(); fit();
     });
+  });
+  document.getElementById('stkUnits').addEventListener('change', function(e){
+    UICFG.stockUnits = e.target.value; uiCfgSave(); syncStockUI();   // same size, shown in the new units
   });
   // display colors (now in the Settings modal, wired once)
   var sd = document.getElementById('showDims');
@@ -5926,10 +5963,7 @@ function wire(){
   // Settings modal open/close
   var settingsModal = document.getElementById('settingsModal');
   function openSettings(){
-    // sync current stock into fields when opening
-    document.getElementById('stkW').value = DOC.stock.w;
-    document.getElementById('stkH').value = DOC.stock.h;
-    document.getElementById('stkOrigin').value = DOC.stock.origin;
+    syncStockUI();                                      // current size, in the chosen units
     settingsModal.hidden = false;
   }
   function closeSettings(){ settingsModal.hidden = true; }
