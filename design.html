@@ -423,7 +423,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.47.1'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.48.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -831,6 +831,34 @@ function dimApply(d, v){
   return false;
 }
 // A dimension has just been placed: open its value for typing, the way Fusion does.
+// A dimension is grabbed by its value plate or anywhere along its line.
+function pickDim(sx, sy){
+  if (!UICFG.showDims || !DOC.dims) return -1;
+  var best = -1, bestD = 8;                          // within 8 screen px
+  for (var i = 0; i < DOC.dims.length; i++){
+    var d = DOC.dims[i], hh = d._hit;
+    if (hh && Math.abs(sx - hh.x) < hh.w/2 && Math.abs(sy - hh.y) < hh.h/2) return i;   // the value itself wins
+    var an = dimAnchor(d);
+    if (!an || d.kind !== 'pair') continue;
+    var pa = w2s(an.a.x, an.a.y), pb = w2s(an.b.x, an.b.y);
+    var dd = distToSeg(sx, sy, pa.x, pa.y, pb.x, pb.y);
+    if (dd < bestD){ bestD = dd; best = i; }
+  }
+  return best;
+}
+function editDim(i, sx, sy){
+  var d = DOC.dims[i];
+  if (!d) return;
+  if (TOOL !== 'dim') setTool('dim');
+  DIMSEL = i;
+  DRAW = {stage:'dimValue', di:i};
+  var cur = dimValue(d);
+  if (sx !== undefined) FLOAT_AT = {x:sx, y:sy};     // open the box where it was grabbed
+  else { var an = dimAnchor(d); if (an) floatAtWorld(an.x, an.y); }
+  showPrompt(STAGE_LABEL[d.kind === 'pair' ? 'dimEditV' : 'dimEditS'], cur === null ? '' : cur.toFixed(2), true,
+             d.kind === 'dia' ? '\u00d8' : d.kind === 'rad' ? 'R' : 'mm');
+  draw();
+}
 function dimJustAdded(d){
   var i = dimsArr().indexOf(d);
   if (i < 0) return;
@@ -1510,18 +1538,8 @@ function toolClick(w, snap){
     // clicking an existing dimension label opens it for editing
     if (UICFG.showDims && DOC.dims){
       var spD = w2s(w.x, w.y);
-      for (var dh = 0; dh < DOC.dims.length; dh++){
-        var hh = DOC.dims[dh]._hit;
-        if (hh && Math.abs(spD.x-hh.x) < hh.w/2 && Math.abs(spD.y-hh.y) < hh.h/2){
-          DIMSEL = dh;
-          DRAW = {stage:'dimValue', di:dh};
-          var cv0 = dimValue(DOC.dims[dh]);
-          FLOAT_AT = {x:hh.x, y:hh.y};
-          showPrompt(STAGE_LABEL.dimEditV, cv0 === null ? '' : cv0.toFixed(2), true,
-                     DOC.dims[dh].kind === 'dia' ? '\u00d8' : DOC.dims[dh].kind === 'rad' ? 'R' : 'mm');
-          draw(); return;
-        }
-      }
+      var dHit = pickDim(spD.x, spD.y);           // the value plate or the dimension line
+      if (dHit >= 0){ editDim(dHit, spD.x, spD.y); return; }
     }
     var hitD = pickEntity(w);
     if (hitD === null){ DRAW = null; DIMSEL = null; stagePrompt('dim0'); draw(); return; }
@@ -6157,9 +6175,12 @@ function wire(){
 
   // ---- double-click text (Select tool) to edit it ----
   cv.addEventListener('dblclick', function(ev){
-    if (TOOL !== 'select') return;
     var r0 = cv.getBoundingClientRect();
-    var w0 = s2w(ev.clientX - r0.left, ev.clientY - r0.top);
+    var sx0 = ev.clientX - r0.left, sy0 = ev.clientY - r0.top;
+    var w0 = s2w(sx0, sy0);
+    var hitDim = pickDim(sx0, sy0);                 // a dimension line or its value opens for editing
+    if (hitDim >= 0){ editDim(hitDim, sx0, sy0); return; }
+    if (TOOL !== 'select') return;
     var h0 = pickEntity(w0);
     if (h0 === null) return;
     var already = HANDLES.active && SEL.indexOf(h0) >= 0;
