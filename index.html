@@ -56,6 +56,9 @@
   #statsBar .stat b{font-family:var(--mono);font-weight:500;color:var(--ink);white-space:nowrap}
   #statsBar .stat span{color:var(--muted)}
   #tabs{display:flex;border-bottom:1px solid var(--line)}
+  .linkBtn{background:none;border:0;padding:4px 6px;color:var(--muted);text-decoration:underline;font-size:12.5px;cursor:pointer}
+  .linkBtn:hover{color:var(--ink)}
+  .linkBtn[hidden]{display:none}
   #tabs button{flex:1;border:0;border-radius:0;background:var(--panel-deep);color:var(--muted);padding:9px;font-size:13px;border-bottom:2px solid transparent}
   #tabs button.active{color:var(--ink);background:var(--panel);border-bottom-color:var(--amber);font-weight:600}
   #tabs button .badge{display:inline-block;min-width:18px;padding:1px 5px;border-radius:9px;font-size:11px;font-family:var(--mono);margin-left:6px;background:var(--line);color:var(--ink)}
@@ -316,6 +319,7 @@
       <div id="machinePane">
         <div class="mRow">
           <button id="connectBtn" class="primary">Connect to machine</button>
+          <button id="choosePort" class="linkBtn" hidden title="Pick a different USB port">Choose port&hellip;</button>
           <span class="chip" id="connChip">not connected</span>
         </div>
         <p id="serialNote">Talks GRBL 1.1 over USB at 115200 baud (Shapeoko / Nomad controller). Needs Chrome or Edge on desktop — Web Serial. This moves a real machine: keep a hand near the e-stop, and air-cut new files first.</p>
@@ -652,7 +656,7 @@
    Produces: segments (tessellated micro-moves), issues, tools
    All internal units are mm. seg.units records display units.
    ============================================================ */
-var CONTROL_VERSION = '0.12.2';
+var CONTROL_VERSION = '0.12.3';
 
 var SUPPORTED_G = {0:1,1:1,2:1,3:1,4:1,17:1,18:1,19:1,20:1,21:1,28:1,28.2:1,90:1,91:1,91.1:1,90.1:1,53:1};
 var IGNORED_G   = {40:'G40 cutter compensation off — accepted but ignored by Carbide Motion',
@@ -2486,15 +2490,37 @@ function sendRT(byte, label){
   rawWrite(new Uint8Array([byte]));
 }
 
-async function serialConnect(){
+// The last controller used, by USB identity. Chrome keeps the permission, so reconnecting to it
+// needs no port picker. Only an unambiguous match is reused, never a guess between devices.
+function portKey(port){ var i = port.getInfo ? port.getInfo() : {}; return {v: i.usbVendorId || null, p: i.usbProductId || null}; }
+async function rememberedPort(){
+  if (!SERIAL.supported || !navigator.serial.getPorts) return null;
+  var saved = null;
+  try{ saved = JSON.parse(localStorage.getItem('454-control-port') || 'null'); }catch(e){}
+  if (!saved || saved.v === null) return null;
+  var ports = await navigator.serial.getPorts();
+  var hits = ports.filter(function(pt){ var k = portKey(pt); return k.v === saved.v && k.p === saved.p; });
+  return hits.length === 1 ? hits[0] : null;
+}
+async function refreshConnectLabel(){
+  if (SERIAL.connected) return;
+  var rp = null;
+  try{ rp = await rememberedPort(); }catch(e){}
+  if (SERIAL.connected) return;
+  document.getElementById('connectBtn').textContent = rp ? 'Reconnect to machine' : 'Connect to machine';
+  document.getElementById('choosePort').hidden = !rp;
+}
+async function serialConnect(pick){
   if (SERIAL.connected){ serialDisconnect(); return; }
   if (!SERIAL.supported){
     alert('Web Serial is not available in this browser. Use Chrome or Edge on desktop (opening the file locally is fine).');
     return;
   }
   try{
-    var port = await navigator.serial.requestPort();
+    var port = pick === true ? null : await rememberedPort();
+    if (!port) port = await navigator.serial.requestPort();
     await port.open({baudRate: 115200});
+    try{ localStorage.setItem('454-control-port', JSON.stringify(portKey(port))); }catch(e){}
     SERIAL.port = port;
     SERIAL.writer = port.writable.getWriter();
     SERIAL.reader = port.readable.getReader();
@@ -2525,6 +2551,12 @@ async function serialDisconnect(){
   try{ if (SERIAL.reader) await SERIAL.reader.cancel(); }catch(e){}
 }
 
+// anything that would be dangerous to cut off by reloading or closing the page
+function machineBusy(){
+  if (JOB.active || PROBE.active || QA.active || JOGC.active) return true;
+  if (!SERIAL.connected) return false;
+  return SERIAL.spindleOn || /^(Run|Jog|Hold|Home|Door)/.test(SERIAL.state || '');
+}
 function serialCleanup(){
   if (JOB.active) recoveryNote('connection lost');
   if (SERIAL.pollTimer){ clearInterval(SERIAL.pollTimer); SERIAL.pollTimer = null; }
@@ -2638,6 +2670,7 @@ function parseStatus(s){
   SERIAL.state = f[0].split(':')[0];
   if (SERIAL.prevState === 'Home' && SERIAL.state === 'Idle') SERIAL.homedSeen = true;
   SERIAL.prevState = SERIAL.state;
+  SERIAL.spindleOn = /\|A:[^|>]*[SC]/.test(s);   // A:S / A:C = spindle running; no A field = everything off
   var pinsNow = '';
   for (var i = 1; i < f.length; i++){
     var ci = f[i].indexOf(':');
@@ -2737,6 +2770,8 @@ function uiStatus(){
 
 function uiConn(on){
   document.getElementById('connectBtn').textContent = on ? 'Disconnect' : 'Connect to machine';
+  document.getElementById('choosePort').hidden = true;
+  if (!on) refreshConnectLabel();
   document.getElementById('connChip').textContent = on ? 'connected' : 'not connected';
   document.getElementById('mControls').classList.toggle('disabledArea', !on);
   document.getElementById('hdrMachine').classList.toggle('on', on);
@@ -3632,7 +3667,26 @@ function updateJobUI(statusText){
 
 /* ---------------- machine tab wiring ---------------- */
 function wireMachine(){
-  document.getElementById('connectBtn').addEventListener('click', serialConnect);
+  document.getElementById('connectBtn').addEventListener('click', function(){ serialConnect(false); });
+  document.getElementById('choosePort').addEventListener('click', function(){ serialConnect(true); });
+  if (SERIAL.supported && navigator.serial.addEventListener){        // plugging the controller in or out
+    navigator.serial.addEventListener('connect', refreshConnectLabel);
+    navigator.serial.addEventListener('disconnect', refreshConnectLabel);
+  }
+  refreshConnectLabel();
+  // ---- leaving the page while the machine is working ----
+  window.addEventListener('beforeunload', function(e){
+    if (!machineBusy()) return;
+    e.preventDefault(); e.returnValue = '';                        // the browser shows its own "Leave site?" prompt
+    return '';
+  });
+  window.addEventListener('pagehide', function(){
+    // Leaving anyway mid-job: streaming would stop with the spindle still running in the cut.
+    // A controller reset stops motion and the spindle. Best effort: browsers may not deliver it.
+    if (SERIAL.connected && (JOB.active || PROBE.active || QA.active || SERIAL.spindleOn)){
+      try{ rawWrite(new Uint8Array([0x18])); }catch(e){}
+    }
+  });
   if (SERIAL.supported && navigator.serial.addEventListener){
     navigator.serial.addEventListener('disconnect', function(){
       if (SERIAL.connected){ logC('err', 'USB device disconnected'); serialDisconnect(); }
