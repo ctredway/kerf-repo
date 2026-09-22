@@ -209,6 +209,9 @@
   #floatIn[hidden]{display:none}
   #floatIn input{width:96px;background:none;border:0;outline:none;color:var(--ink);font-family:var(--mono);font-size:13px;padding:2px 0}
   #floatTag{font-size:11px;color:var(--amber);font-family:var(--mono);white-space:nowrap}
+  #floatDel{background:none;border:0;padding:0 2px;color:var(--muted);font-size:13px;line-height:1;cursor:pointer}
+  #floatDel:hover{color:#e06c5a}
+  #floatDel[hidden]{display:none}
   #floatTag:empty{display:none}
   #promptBar{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;display:none;align-items:center;gap:8px;background:rgba(23,28,34,.95);border:1px solid var(--amber);border-radius:6px;padding:8px 12px;z-index:5}
   #promptBar.on{display:flex}
@@ -375,7 +378,7 @@
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
     <div id="promptHint"></div>
-    <div id="floatIn" hidden><span id="floatTag"></span><input id="promptIn" autocomplete="off" spellcheck="false"></div>
+    <div id="floatIn" hidden><span id="floatTag"></span><input id="promptIn" autocomplete="off" spellcheck="false"><button id="floatDel" hidden title="Delete this dimension">✕</button></div>
     <div id="promptBar">
       <label id="promptLbl">value</label>
       <span id="filletTypes" hidden role="group" aria-label="Corner type">
@@ -424,7 +427,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.50.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.51.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -860,6 +863,14 @@ function editDim(i, sx, sy){
   showPrompt(STAGE_LABEL[d.kind === 'pair' ? 'dimEditV' : 'dimEditS'], cur === null ? '' : fmtDisp(cur), true,
              (d.kind === 'dia' ? '\u00d8 ' : d.kind === 'rad' ? 'R ' : '') + unitTag());
   draw();
+}
+function deleteDim(i){
+  if (!DOC.dims || !DOC.dims[i]) return;
+  pushUndo();
+  DOC.dims.splice(i, 1);
+  DIMSEL = null; DRAW = null;
+  hidePrompt(); persist(); draw();
+  toast('ok', 'Dimension deleted', 'Undo brings it back. The geometry is untouched.');
 }
 function dimJustAdded(d){
   var i = dimsArr().indexOf(d);
@@ -1663,6 +1674,13 @@ function toolClick(w, snap){
     } else stagePrompt('guide0');
   }
   else if (TOOL === 'select'){
+    var sD = w2s(w.x, w.y), dPick = pickDim(sD.x, sD.y);
+    if (dPick >= 0){                                  // a dimension: select it, ready for Delete
+      DIMSEL = dPick; SEL = []; HANDLES.active = false; DRAW = null;
+      showPrompt('Dimension selected \u2014 Delete removes it, double-click to change its value', '', false);
+      draw(); return;
+    }
+    DIMSEL = null;
     var hit = pickEntity(w);
     if (hit !== null){
       var wasSel = SEL.indexOf(hit) >= 0 && !MOUSE.shift;
@@ -2001,6 +2019,8 @@ function placeFloatIn(){
   box.style.top  = Math.max(8, Math.min(at.y - h - 10, maxY)) + 'px';
 }
 function showPrompt(label, val, selectAll, tag){
+  var delB = document.getElementById('floatDel');
+  if (delB) delB.hidden = !(DRAW && DRAW.stage === 'dimValue');
   document.getElementById('promptLbl').textContent = label;
   var i = document.getElementById('promptIn');
   i.value = val || '';
@@ -6076,6 +6096,9 @@ function wire(){
   function closeSettings(){ settingsModal.hidden = true; }
   document.getElementById('settingsBtn').addEventListener('click', openSettings);
   document.getElementById('libBtn').addEventListener('click', function(){ libOpen(); });
+  document.getElementById('floatDel').addEventListener('click', function(){
+    if (DRAW && DRAW.stage === 'dimValue') deleteDim(DRAW.di);
+  });
   document.getElementById('tdClose').addEventListener('click', closeToolDetails);
   document.getElementById('tdDone').addEventListener('click', closeToolDetails);
   document.getElementById('tdLib').addEventListener('click', function(){
@@ -6592,6 +6615,9 @@ function wire(){
         showPrompt('Polyline \u2014 press N for node editing to move or dimension individual points', '', false);
       }
       return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !SEL.length && DIMSEL !== null && DOC.dims && DOC.dims[DIMSEL]){
+      deleteDim(DIMSEL); e.preventDefault(); return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && SEL.length){
       pushUndo();
