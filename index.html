@@ -161,6 +161,8 @@
   .smPane.active{display:block}
   #bzModal{position:fixed;inset:0;background:rgba(10,13,17,.65);display:flex;align-items:center;justify-content:center;z-index:65}
   #bzModal[hidden]{display:none}
+  .hlp{background:none;border:0;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;padding:0 3px}
+  .hlp:hover{color:var(--amber)}
   #dlgModal{position:fixed;inset:0;background:rgba(10,13,17,.7);display:flex;align-items:center;justify-content:center;z-index:90}
   #dlgModal[hidden]{display:none}
   #dlgPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;width:min(560px,94vw);max-height:86vh;display:flex;flex-direction:column;box-shadow:0 14px 48px rgba(0,0,0,.6)}
@@ -370,6 +372,7 @@
           <div class="mSection">
             <h3>Controller config</h3>
             <div class="mRow"><button id="refreshCfg">Re-read ($$, $#)</button><span class="chip" id="cfgChip">read on connect</span></div>
+            <div class="mRow"><button id="cfgCheck">Check controller settings</button></div>
             <div id="cfgTable" style="display:none;font-family:var(--mono);font-size:11.5px;line-height:18px;background:var(--panel-deep);border:1px solid var(--line);border-radius:4px;padding:6px 8px;max-height:190px;overflow-y:auto"></div>
           </div>
 
@@ -488,7 +491,7 @@
       <span style="color:var(--faint)">mm</span>
     </div>
     <div class="mRow">
-      <label>Fast XY</label><input type="number" id="jogFeedXY" value="3000" step="100">
+      <button class="hlp" data-h="jog" title="What is this?" aria-label="Help">ⓘ</button><label>Fast XY</label><input type="number" id="jogFeedXY" value="3000" step="100">
       <label>Fast Z</label><input type="number" id="jogFeedZ" value="600" step="50">
       <span style="color:var(--faint)">mm/min</span>
     </div>
@@ -540,7 +543,7 @@
       <h3 style="font-size:13px;font-weight:600;margin:6px 0 8px">Display</h3>
       <div class="mRow"><input type="checkbox" id="showRapids" checked><label for="showRapids">Show rapid moves</label></div>
       <div class="mRow"><input type="checkbox" id="showEnvelope"><label for="showEnvelope">Show work area outline</label></div>
-      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Work area</h3>
+      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Work area <button class="hlp" data-h="workarea" title="What is this?" aria-label="Help">ⓘ</button></h3>
       <div class="mRow">
         <select id="machinePreset">
           <option value="">Custom…</option>
@@ -555,7 +558,7 @@
         <label style="margin-left:8px">Depth Y</label><input type="number" id="envD" value="425"> <span style="color:var(--faint)">mm</span>
       </div>
       <div class="mRow">
-        <label>Job zero at</label>
+        <label>Job zero at</label><button class="hlp" data-h="jobzero" title="What is this?" aria-label="Help">ⓘ</button>
         <select id="originSel">
           <option value="corner">front-left corner of stock</option>
           <option value="center">center of stock</option>
@@ -563,12 +566,12 @@
       </div>
       <div class="mRow"><input type="checkbox" id="checkEnvelope"><label for="checkEnvelope">Flag moves outside work area</label></div>
       <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">Auto-synced from the controller's $130/$131 on connect. The outside-work-area check assumes the job zero sits where selected above.</p>
-      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Stock</h3>
+      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Stock <button class="hlp" data-h="stock" title="What is this?" aria-label="Help">ⓘ</button></h3>
       <div class="mRow">
         <label>Thickness</label><input type="number" id="stockThk" value="0" step="0.5"> <span style="color:var(--faint)">mm</span>
       </div>
       <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">If Z0 is the top of your stock, cuts deeper than this get flagged (i.e. into your wasteboard). 0 disables.</p>
-      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Time estimate</h3>
+      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Time estimate <button class="hlp" data-h="rapid" title="What is this?" aria-label="Help">ⓘ</button></h3>
       <div class="mRow">
         <label>Rapid rate</label><input type="number" id="rapidRate" value="5000" step="100"> <span style="color:var(--faint)">mm/min — auto-set from the controller</span>
       </div>
@@ -576,17 +579,17 @@
 
     <div class="smPane" id="smAcc">
       <div class="mRow">
-        <input type="checkbox" id="bsEnable"><label for="bsEnable">BitSetter</label>
+        <input type="checkbox" id="bsEnable"><label for="bsEnable">BitSetter</label><button class="hlp" data-h="bitsetter" title="What is this?" aria-label="Help">ⓘ</button>
         <label style="margin-left:6px">machine X</label><input type="number" id="bsX" step="0.1" style="width:84px">
         <label>Y</label><input type="number" id="bsY" step="0.1" style="width:84px">
         <button id="bsCapture" title="Jog the tool over the BitSetter button, then store the current machine position">Capture position</button>
       </div>
       <div class="mRow">
-        <input type="checkbox" id="bzEnable"><label for="bzEnable">BitZero</label>
+        <input type="checkbox" id="bzEnable"><label for="bzEnable">BitZero</label><button class="hlp" data-h="bitzero" title="What is this?" aria-label="Help">ⓘ</button>
         <select id="bzVersion"><option value="v1">v1</option><option value="v2">v2</option></select>
       </div>
       <div class="mRow">
-        <label>Spindle</label>
+        <label>Spindle</label><button class="hlp" data-h="spindle" title="What is this?" aria-label="Help">ⓘ</button>
         <select id="spinType"><option value="router">Trim router</option><option value="vfd">VFD spindle</option></select>
         <label>spin-up</label><input type="number" id="spinupSec" value="10" step="0.5" min="0" style="width:64px"><span style="color:var(--faint)">s dwell after M3</span>
       </div>
@@ -595,14 +598,14 @@
 
     <div class="smPane" id="smJob">
       <div class="mRow">
-        <input type="checkbox" id="highStart" checked><label for="highStart">Start &amp; stop high — travel at the top before plunging, at the start and after every tool change, and lift clear before every spindle stop and at the end of the job. Leave this on: it is what keeps the bit above clamps and stock.</label>
+        <input type="checkbox" id="highStart" checked><label for="highStart">Start &amp; stop high — travel at the top before plunging, at the start and after every tool change, and lift clear before every spindle stop and at the end of the job. Leave this on: it is what keeps the bit above clamps and stock.</label><button class="hlp" data-h="highstart" title="What is this?" aria-label="Help">ⓘ</button>
       </div>
       <div class="mRow">
         <label>Traverse height</label>
-        <input type="number" id="travelZIn" value="5" step="1" min="1" max="30" style="width:64px">
+        <input type="number" id="travelZIn" value="5" step="1" min="1" max="30" style="width:64px"><button class="hlp" data-h="travelz" title="What is this?" aria-label="Help">ⓘ</button>
         <span style="color:var(--faint)">mm below Z top — used by start/stop-high, go-to-zero, and BitSetter parking</span>
       </div>
-      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Tool-change parking</h3>
+      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Parking <button class="hlp" data-h="park" title="What is this?" aria-label="Help">ⓘ</button></h3>
       <div class="mRow">
         <input type="checkbox" id="tcEnable"><label for="tcEnable">Park before the tool prompt</label>
         <label style="margin-left:6px">machine X</label><input type="number" id="tcX" step="0.1" style="width:84px">
@@ -709,7 +712,7 @@
    Produces: segments (tessellated micro-moves), issues, tools
    All internal units are mm. seg.units records display units.
    ============================================================ */
-var CONTROL_VERSION = '0.15.1';
+var CONTROL_VERSION = '0.16.0';
 
 var SUPPORTED_G = {0:1,1:1,2:1,3:1,4:1,17:1,18:1,19:1,20:1,21:1,28:1,28.2:1,90:1,91:1,91.1:1,90.1:1,53:1};
 var IGNORED_G   = {40:'G40 cutter compensation off — accepted but ignored by Carbide Motion',
@@ -2905,6 +2908,65 @@ function dlgEnd(v){
   var r = DLG_RESOLVE; DLG_RESOLVE = null;
   if (r) r(v);
 }
+var HELP_TEXT = {
+  'workarea': {t:'Work area', b:"The cutting area of your machine, used to draw the outline in the preview and to flag toolpaths that run outside it.\n\nThis is 454 Control's own idea of your machine, not the controller's. The controller has its own travel limits in $130/$131/$132, and the controller check compares the two."},
+  'jobzero': {t:'Job zero', b:"Where the drawing's 0,0 sits on the stock: the front-left corner, or the middle.\n\nThis only affects the preview and the outside-work-area check. It does not move your machine's work zero, which you set with the BitZero or by zeroing the axes."},
+  'stock': {t:'Stock thickness', b:'The thickness of the material, used to flag cuts that go deeper than the stock.\n\nLeave it at 0 to turn the check off. Set it when Z0 is the top of your material and you want warning of cuts that reach your wasteboard.'},
+  'rapid': {t:'Rapid rate (time estimate only)', b:"The speed 454 Control assumes for G0 moves when estimating how long a job takes. It changes the estimate only; the machine's real rapid speed comes from $110/$111/$112 in the controller.\n\nReal jobs run a little longer than the estimate because acceleration isn't modelled."},
+  'bitsetter': {t:'BitSetter', b:'The fixed button the tool touches so the machine can measure tool length.\n\nJog the tool over the button and press Capture position; the machine coordinates are stored. During a job with tool changes, each new tool is measured here and the length difference is applied automatically, so you only zero Z once.\n\nIt needs a homed machine, because the position is in machine coordinates.'},
+  'bitzero': {t:'BitZero', b:"The touch plate used to set your work zero. 454 Control uses it for Z.\n\nSet the plate thickness by measuring it with calipers; the probe sets Z0 at the top of the stock, which is the plate's trigger height minus the thickness. Verify the circuit (touch the pin to the plate) before probing, and paper-test the zero before cutting."},
+  'spindle': {t:'Spindle type and spin-up', b:"Trim router or VFD spindle, and how long to wait after M3 before any cutting move.\n\nMost CAM files don't include that wait, so 454 Control inserts a dwell after each spindle start. Carbide Motion does the same thing, at about 2.5 s, which suits a router. A VFD spindle takes longer to reach speed: 10 s is the default here.\n\nToo short means the bit enters the material before it is up to speed."},
+  'highstart': {t:'Start & stop high', b:'Keeps the tool high whenever it is travelling rather than cutting.\n\nAt the start and after every tool change, the machine traverses to the next XY at the top of travel before plunging. Before every spindle stop, and at the end of the job, it lifts clear first.\n\nThis is what stops a bit dragging across clamps and stock. A lift is skipped when the tool is already higher than traverse height, so it never moves down.'},
+  'travelz': {t:'Traverse height', b:'How far below the top of Z travel the machine sits when it is moving rather than cutting, in machine coordinates.\n\nUsed by start/stop-high, go-to-zero, the BitSetter moves and the end of the job. 5 mm below the top is a good default; increase it if you have tall workholding.'},
+  'park': {t:'Parking', b:'Where the machine moves so you can reach the spindle.\n\nPark before the tool prompt: at each tool change the machine moves here first, so you have room for a wrench. Also park when the job finishes: at the end the machine lifts, stops the spindle, then moves here, leaving the part clear for measuring or unclamping.\n\nBoth use machine coordinates, so they need a homed machine and a captured position.'},
+  'jog': {t:'Jog speeds', b:'The feed rates used by the jog buttons and arrow keys, for XY and for Z separately.\n\nThese apply to jogging only; they have no effect on a running job. Keep Z slower than XY: it is the axis that finds clamps.'}
+};
+function showHelp(key){
+  var h = HELP_TEXT[key];
+  if (h) uiNote(h.t, h.b);
+}
+// After connecting, read the controller's own settings back and check the ones 454 Control
+// depends on. Wrong values here fail quietly: no homing means no machine coordinates, a low
+// $30 caps spindle RPM, laser mode changes how S is handled.
+function controllerCheck(quiet){
+  var g = SERIAL.settings || {}, out = [];
+  function has(n){ return g[n] !== undefined; }
+  if (!has(22)){ out.push({sev:'info', t:'Controller settings not read yet \u2014 try again in a moment.'}); return out; }
+  if (g[22] === 0) out.push({sev:'err', t:'Homing is disabled ($22 = 0). 454 Control needs a homed machine: no homing means no machine coordinates, so lifting clear, parking and the BitSetter can\u2019t work.'});
+  else if (g[20] === 0) out.push({sev:'warn', t:'Soft limits are off ($20 = 0). With homing on, soft limits stop a move before it hits a limit switch.'});
+  if (g[32] === 1) out.push({sev:'err', t:'Laser mode is on ($32 = 1). For milling it should be 0, or spindle speeds behave oddly and M3 doesn\u2019t hold the spindle on through moves.'});
+  var envW = PROFILE.view.envW, envD = PROFILE.view.envD;
+  function travelOff(axis, n2, want){
+    if (!has(n2) || !(want > 0)) return;
+    var have = g[n2];
+    if (Math.abs(have - want) > Math.max(5, want * 0.05))
+      out.push({sev:'warn', t:axis + ' travel differs: the controller says ' + have.toFixed(1) + ' mm ($' + n2 + '), your work area setting says ' + want + ' mm. One of them is wrong.'});
+  }
+  travelOff('X', 130, envW); travelOff('Y', 131, envD);
+  if (has(30)){
+    // $30 = 1000 is normal for a trim router on a Carbide board; a VFD needs its real maximum
+    if (PROFILE.spindle.type === 'vfd' && g[30] < 10000)
+      out.push({sev:'warn', t:'Maximum spindle speed is ' + g[30] + ' ($30), but your spindle is set to VFD. A VFD is usually 24000 \u2014 a low value caps every S word in your files.'});
+    if (typeof MODEL !== 'undefined' && MODEL && MODEL.sMax && MODEL.sMax > g[30])
+      out.push({sev:'err', t:'The loaded file asks for S' + MODEL.sMax + ', above the controller\u2019s maximum of ' + g[30] + ' ($30). The spindle will be capped.'});
+  }
+  if (has(27) && g[27] <= 0) out.push({sev:'warn', t:'Homing pull-off is 0 ($27). The switches stay pressed after homing, which can trip alarms.'});
+  if (has(110) && PROFILE.view.rapidRate > g[110] * 1.2)
+    out.push({sev:'info', t:'Time estimates assume ' + PROFILE.view.rapidRate + ' mm/min rapids, but the machine\u2019s maximum X rate is ' + g[110] + ' ($110). Estimates will read short.'});
+  if (!out.length && !quiet) out.push({sev:'ok', t:'Controller settings look right: homing on, travel matches your work area, spindle maximum ' + (has(30) ? g[30] : '?') + '.'});
+  return out;
+}
+function controllerCheckShow(auto){
+  var found = controllerCheck(false);
+  found.forEach(function(f){ logC(f.sev === 'err' ? 'err' : 'sys', 'controller check: ' + f.t); });
+  var bad = found.filter(function(f){ return f.sev === 'err' || f.sev === 'warn'; });
+  if (auto && !bad.length) return;                       // nothing to interrupt for
+  uiDialog({title: bad.length ? 'Check these controller settings' : 'Controller settings',
+            body: (bad.length ? found : found).map(function(f){
+              return (f.sev === 'err' ? '\u26a0\u26a0 ' : f.sev === 'warn' ? '\u26a0 ' : '') + f.t;
+            }).join('\n\n') + (bad.length ? '\n\nThey are changed in the controller itself ($ settings), not here. Carbide Motion\u2019s setup wizard writes them for Shapeoko machines.' : ''),
+            ok:'OK', note:true});
+}
 var HOME_ASKED = false;
 function homeMaybeAsk(){
   if (HOME_ASKED || !SERIAL.connected || SERIAL.homedSeen) return;
@@ -3201,6 +3263,7 @@ function doQuery(){
   setTimeout(function(){ sendLine('$I', true); }, 100);
   setTimeout(function(){ sendLine('$$', true); }, 300);
   setTimeout(function(){ sendLine('$#', true); }, 700);
+  setTimeout(function(){ if (SERIAL.connected) controllerCheckShow(true); }, 1600);   // after $$ has come back
 }
 
 function detectModel(){
@@ -3993,6 +4056,11 @@ function wireMachine(){
   document.getElementById('bzClose').addEventListener('click', bzCloseModal);
   document.getElementById('bzEstop').addEventListener('click', emergencyStop);
   document.getElementById('bzStart').addEventListener('click', bzStart);
+  document.getElementById('cfgCheck').addEventListener('click', function(){ controllerCheckShow(false); });
+  document.body.addEventListener('click', function(e){            // help icons anywhere in the app
+    var b = e.target && e.target.closest ? e.target.closest('.hlp') : null;
+    if (b && b.dataset.h) showHelp(b.dataset.h);
+  });
   document.getElementById('rbJog').addEventListener('click', jogModalOpen);
   document.getElementById('dlgOk').addEventListener('click', function(){ dlgEnd(true); });
   document.getElementById('dlgCancel').addEventListener('click', function(){ dlgEnd(false); });
