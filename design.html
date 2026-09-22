@@ -302,9 +302,10 @@
       <div class="srow">
         <label for="stkW">Width</label><input type="text" inputmode="decimal" id="stkW" autocomplete="off">
         <label for="stkH" style="margin-left:10px">Height</label><input type="text" inputmode="decimal" id="stkH" autocomplete="off">
-        <select id="stkUnits" aria-label="Units for the material size"><option value="mm">mm</option><option value="in">in</option></select>
+        <select id="stkUnits" aria-label="Units"><option value="mm">mm</option><option value="in">in</option></select>
       </div>
       <p class="snote" id="stkEq"></p>
+      <p class="snote">Units apply everywhere: the material size, dimensions, typed values, the measure tool and the readout. A unit written after a number always wins, so 25mm works while drawing in inches, and 1/2&quot; works while drawing in mm.</p>
       <div class="srow">
         <label>Job zero</label>
         <select id="stkOrigin">
@@ -423,7 +424,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.48.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.50.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -805,10 +806,11 @@ function dimAnchor(d){
 function dimLabel(d){
   var v = dimValue(d);
   if (v === null) return null;
-  if (d.kind === 'dia') return '\u00d8' + v.toFixed(2);
-  if (d.kind === 'rad') return 'R' + v.toFixed(2);
-  if (d.kind === 'pair' && d.edge) return v.toFixed(2) + ' (edge)';
-  return v.toFixed(2);
+  var t = fmtDisp(v) + (dispIn() ? '\u2033' : '');
+  if (d.kind === 'dia') return '\u00d8' + t;
+  if (d.kind === 'rad') return 'R' + t;
+  if (d.kind === 'pair' && d.edge) return t + ' (edge)';
+  return t;
 }
 // apply a typed value: drives the geometry
 function dimApply(d, v){
@@ -855,8 +857,8 @@ function editDim(i, sx, sy){
   var cur = dimValue(d);
   if (sx !== undefined) FLOAT_AT = {x:sx, y:sy};     // open the box where it was grabbed
   else { var an = dimAnchor(d); if (an) floatAtWorld(an.x, an.y); }
-  showPrompt(STAGE_LABEL[d.kind === 'pair' ? 'dimEditV' : 'dimEditS'], cur === null ? '' : cur.toFixed(2), true,
-             d.kind === 'dia' ? '\u00d8' : d.kind === 'rad' ? 'R' : 'mm');
+  showPrompt(STAGE_LABEL[d.kind === 'pair' ? 'dimEditV' : 'dimEditS'], cur === null ? '' : fmtDisp(cur), true,
+             (d.kind === 'dia' ? '\u00d8 ' : d.kind === 'rad' ? 'R ' : '') + unitTag());
   draw();
 }
 function dimJustAdded(d){
@@ -866,8 +868,8 @@ function dimJustAdded(d){
   DRAW = {stage:'dimValue', di:i};
   var cur = dimValue(d), an = dimAnchor(d);
   if (an) floatAtWorld(an.x, an.y);                 // the box opens on the dimension itself
-  showPrompt(STAGE_LABEL[d.kind === 'pair' ? 'dimEditV' : 'dimEditS'], cur === null ? '' : cur.toFixed(2), true,
-             d.kind === 'dia' ? '\u00d8' : d.kind === 'rad' ? 'R' : 'mm');
+  showPrompt(STAGE_LABEL[d.kind === 'pair' ? 'dimEditV' : 'dimEditS'], cur === null ? '' : fmtDisp(cur), true,
+             (d.kind === 'dia' ? '\u00d8 ' : d.kind === 'rad' ? 'R ' : '') + unitTag());
   draw();
 }
 function addDim(d){
@@ -1082,14 +1084,14 @@ function parseNumericPoint(str, ref){
   if (str[0] === '@'){ rel = true; str = str.slice(1); }
   var pol = str.split('<');
   if (pol.length === 2 && ref){
-    var len = parseFloat(pol[0]), ang = parseFloat(pol[1]) * Math.PI / 180;
+    var len = lenIn(pol[0]), ang = parseFloat(pol[1]) * Math.PI / 180;   // length in units, angle in degrees
     if (!isNaN(len) && !isNaN(ang))
       return {x: ref.x + len*Math.cos(ang), y: ref.y + len*Math.sin(ang)};
     return null;
   }
   var m = str.split(',');
   if (m.length !== 2) return null;
-  var a = parseFloat(m[0]), b = parseFloat(m[1]);
+  var a = lenIn(m[0]), b = lenIn(m[1]);
   if (isNaN(a) || isNaN(b)) return null;
   if (rel && ref) return {x:ref.x + a, y:ref.y + b};
   if (rel) return null;
@@ -1697,7 +1699,7 @@ function toolCommitText(txt){
     txt = txt.trim();
     if (ent.t === 'line'){
       var pol = txt.split('<');
-      var len = parseFloat(pol[0]);
+      var len = lenIn(pol[0]);
       if (isNaN(len) || len <= 0) return;
       var dx = ent.x2-ent.x1, dy = ent.y2-ent.y1;
       var ang = pol.length === 2 ? parseFloat(pol[1])*Math.PI/180 : Math.atan2(dy,dx);
@@ -1706,21 +1708,21 @@ function toolCommitText(txt){
       ent.x2 = ent.x1 + len*Math.cos(ang);
       ent.y2 = ent.y1 + len*Math.sin(ang);
     } else if (ent.t === 'circle'){
-      var mc = txt.match(/^([DdRr])?\s*([0-9.]+)$/);
+      var mc = txt.match(/^([DdRr])?\s*(.+)$/);
       if (!mc) return;
-      var v = parseFloat(mc[2]);
+      var v = lenIn(mc[2]);
       if (isNaN(v) || v <= 0) return;
       pushUndo();
       ent.r = (mc[1] && mc[1].toUpperCase() === 'R') ? v : v/2; // bare number = diameter
     } else if (ent.t === 'arc'){
-      var va = parseFloat(txt.replace(/^[Rr]\s*/, ''));
+      var va = lenIn(txt.replace(/^[Rr]\s*/, ''));
       if (isNaN(va) || va <= 0) return;
       pushUndo();
       ent.r = va;
     } else if (ent.t === 'rect'){
       var mr = txt.split(',');
       if (mr.length !== 2) return;
-      var wv = parseFloat(mr[0]), hv = parseFloat(mr[1]);
+      var wv = lenIn(mr[0]), hv = lenIn(mr[1]);
       if (isNaN(wv) || isNaN(hv) || wv <= 0 || hv <= 0) return;
       pushUndo();
       ent.w = wv; ent.h = hv;
@@ -1752,7 +1754,7 @@ function toolCommitText(txt){
       return;
     }
     if (DRAW.stage === 2){
-      var rv = parseFloat(txt);
+      var rv = lenIn(txt);
       if (!isNaN(rv) && Math.abs(rv) > 1e-6){
         var g2 = arcFrom2R({x:DRAW.ax,y:DRAW.ay}, {x:DRAW.bx,y:DRAW.by}, rv);
         if (g2){
@@ -1766,7 +1768,7 @@ function toolCommitText(txt){
   }
   if (TOOL === 'offset'){
     if (!SEL.length){ stagePrompt('selFirst'); return; }
-    var od = parseFloat(txt);
+    var od = lenIn(txt);
     if (!isNaN(od) && Math.abs(od) > 1e-9){
       pushUndo();
       var made = [];
@@ -1838,7 +1840,7 @@ function toolCommitText(txt){
     var mLin = at.match(/^(\d+)\s*@\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)$/);
     var mCirc = at.match(/^(\d+)\s*<\s*(-?[\d.]+)$/);
     if (mLin && !DRAW){
-      var nL = parseInt(mLin[1],10), ddx = parseFloat(mLin[2]), ddy = parseFloat(mLin[3]);
+      var nL = parseInt(mLin[1],10), ddx = lenIn(mLin[2]), ddy = lenIn(mLin[3]);
       if (nL >= 2 && nL <= 500){
         pushUndo();
         var srcL = SEL.slice();
@@ -1876,13 +1878,13 @@ function toolCommitText(txt){
     if (!dd){ DRAW = null; DIMSEL = null; hidePrompt(); return; }
     var rawD = txt.trim();
     var wantEdgeD = /^[eE]/.test(rawD) || /[eE]$/.test(rawD);
-    var vD = parseFloat(rawD.replace(/[eE]/g, ''));
+    var vD = lenIn(rawD.replace(/[eE]/g, '').trim());       // shown units, with 1/2, 12 1/2 or a unit suffix
     if (isNaN(vD) || vD <= 0) return;
     if (wantEdgeD && dd.kind === 'pair') dd.edge = true;
     pushUndo();
     if (dimApply(dd, vD)){
       DRAW = null; DIMSEL = null; stagePrompt('dim0'); persist(); draw();
-      toast('ok', 'Dimension applied', 'Geometry moved to match ' + vD.toFixed(2) + '.');
+      toast('ok', 'Dimension applied', 'Geometry moved to match ' + fmtDisp(vD) + ' ' + unitTag() + '.');
     } else {
       toast('warn', 'Could not apply that', 'The dimension could not drive this geometry.');
     }
@@ -1893,7 +1895,7 @@ function toolCommitText(txt){
     if (!pp){ DRAW = null; hidePrompt(); return; }
     var mxy = txt.split(',');
     if (mxy.length === 2){
-      var nx2 = parseFloat(mxy[0]), ny2 = parseFloat(mxy[1]);
+      var nx2 = lenIn(mxy[0]), ny2 = lenIn(mxy[1]);
       if (!isNaN(nx2) && !isNaN(ny2)){
         pushUndo();
         pe2.pts[DRAW.vi][0] = nx2; pe2.pts[DRAW.vi][1] = ny2;
@@ -1907,7 +1909,7 @@ function toolCommitText(txt){
   if (DRAW && DRAW.stage === 'nodeLen'){
     var pe3 = DOC.ents[DRAW.ent], pp3 = nodePtsOf(pe3);
     if (!pp3){ DRAW = null; hidePrompt(); return; }
-    var wantL = parseFloat(txt);
+    var wantL = lenIn(txt);
     if (!isNaN(wantL) && wantL > 0){
       var m3 = pp3.length, ia = DRAW.seg, ib = (DRAW.seg+1) % m3;
       var ax3 = pp3[ia][0], ay3 = pp3[ia][1], bx3 = pp3[ib][0], by3 = pp3[ib][1];
@@ -1925,7 +1927,7 @@ function toolCommitText(txt){
     return;
   }
   if (TOOL === 'fillet'){
-    var fr = parseFloat(txt);
+    var fr = lenIn(txt);
     if (!isNaN(fr) && fr > 0 && isFinite(fr) && fr <= 10000){
       UICFG.filletR = fr;
       uiCfgSave();
@@ -1936,7 +1938,7 @@ function toolCommitText(txt){
     return;
   }
   if (TOOL === 'guide' && DRAW && DRAW.stage === 'guideOffset'){
-    var d = parseFloat(txt);
+    var d = lenIn(txt);
     if (isNaN(d)) return;
     pushUndo();
     // offset toward stock interior for the picked direction: c shifts by d along normal
@@ -1957,7 +1959,7 @@ function toolCommitText(txt){
   if (TOOL === 'rect' && DRAW){
     var m = txt.split(',');
     if (m.length === 2){
-      var wv = parseFloat(m[0]), hv = parseFloat(m[1]);
+      var wv = lenIn(m[0]), hv = lenIn(m[1]);
       if (!isNaN(wv) && !isNaN(hv)){
         pushUndo();
         DOC.ents.push({t:'rect', x:Math.min(DRAW.x, DRAW.x+wv), y:Math.min(DRAW.y, DRAW.y+hv),
@@ -1968,9 +1970,9 @@ function toolCommitText(txt){
     return;
   }
   if (TOOL === 'circle' && DRAW){
-    var mm = txt.trim().match(/^([DdRr])\s*([0-9.]+)$/);
+    var mm = txt.trim().match(/^([DdRr])\s*(.+)$/);
     if (mm){
-      var r = parseFloat(mm[2]) / (mm[1].toUpperCase()==='D' ? 2 : 1);
+      var r = lenIn(mm[2]) / (mm[1].toUpperCase()==='D' ? 2 : 1);
       pushUndo(); DOC.ents.push({t:'circle',cx:DRAW.x,cy:DRAW.y,r:r});
       DRAW = null; stagePrompt('circle0'); persist(); draw();
     }
@@ -3113,11 +3115,34 @@ function persist(){
 // Material is often sold in inches even when the work is metric, so its size can be entered
 // in either. The drawing always stays in millimetres.
 function stockUnits(){ return UICFG.stockUnits === 'in' ? 'in' : 'mm'; }
+// Display units. The drawing itself is always millimetres; these only change what is shown
+// and what typed dimension values mean.
+function dispIn(){ return stockUnits() === 'in'; }
+function toDisp(mm){ return dispIn() ? mm / 25.4 : mm; }
+function fmtDisp(mm, dp){ return toDisp(mm).toFixed(dp !== undefined ? dp : (dispIn() ? 3 : 2)); }
+function unitTag(){ return dispIn() ? 'in' : 'mm'; }
 function fmtStockLen(mm, u){
   if (u === 'in') return libFraction(mm / 25.4 + 1e-12);   // 304.8 -> "12", 12.7 -> "1/2", else decimals
   return String(+mm.toFixed(3));
 }
 // "12", "12.5", "12 1/2", "12-1/2", "3/4"; a trailing mm, in or " overrides the chosen units
+// Every typed LENGTH goes through here: a plain number means the document units, and a unit
+// written after it wins ("25mm" while working in inches, or 1/2" while working in mm).
+// Angles, counts and percentages are not lengths and are left alone.
+function lenIn(txt){
+  var t = String(txt).trim().toLowerCase();
+  if (!t) return NaN;
+  var u = stockUnits(), m = /^(.*?)\s*(mm|cm|in|"|\u2033)$/.exec(t);
+  if (m){ t = m[1].trim(); u = m[2] === 'mm' ? 'mm' : m[2] === 'cm' ? 'cm' : 'in'; }
+  var sign = 1;
+  if (/^[+-]/.test(t)){ if (t.charAt(0) === '-') sign = -1; t = t.slice(1).trim(); }
+  var v = NaN, f;
+  if ((f = /^(\d+(?:\.\d+)?)\s*[- ]\s*(\d+)\s*\/\s*(\d+)$/.exec(t))) v = +f[1] + f[2] / f[3];
+  else if ((f = /^(\d+)\s*\/\s*(\d+)$/.exec(t))) v = f[1] / f[2];
+  else if (/^\d*\.?\d+$/.test(t)) v = parseFloat(t);
+  if (!isFinite(v)) return NaN;
+  return sign * (u === 'in' ? v * 25.4 : u === 'cm' ? v * 10 : v);
+}
 function parseStockLen(txt, u){
   var t = String(txt).trim().toLowerCase();
   var m = /^(.*?)\s*(mm|in|"|″)$/.exec(t);
@@ -3402,8 +3427,9 @@ function draw(){
       ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke(); ctx.setLineDash([]);
       [sa, sb].forEach(function(q){ ctx.beginPath(); ctx.arc(q.x, q.y, 3.5, 0, Math.PI*2); ctx.fill(); });
       var mdx = mb.x - ma.x, mdy = mb.y - ma.y, mL = Math.hypot(mdx, mdy);
-      var l1 = mgap ? (mL < 1e-9 ? 'touching' : 'gap ' + mL.toFixed(3)) : mL.toFixed(3);
-      var l2 = '\u0394X ' + mdx.toFixed(2) + '  \u0394Y ' + mdy.toFixed(2) + (mgap ? '' : '  ' + (Math.atan2(mdy, mdx)*180/Math.PI).toFixed(1) + '\u00b0');
+      var l1 = mgap && mL < 1e-9 ? 'touching'
+             : (mgap ? 'gap ' : '') + fmtDisp(mL, dispIn() ? 4 : 3) + (dispIn() ? '\u2033' : '');
+      var l2 = '\u0394X ' + fmtDisp(mdx) + '  \u0394Y ' + fmtDisp(mdy) + (mgap ? '' : '  ' + (Math.atan2(mdy, mdx)*180/Math.PI).toFixed(1) + '\u00b0');
       ctx.font = '600 13px system-ui, sans-serif';
       var w1 = ctx.measureText(l1).width; ctx.font = '11px system-ui, sans-serif';
       var w2 = ctx.measureText(l2).width, bw = Math.max(w1, w2) + 14;
@@ -4554,9 +4580,11 @@ function entGap(e1, e2){
   return best || {d:0, a:[0,0], b:[0,0]};
 }
 function measText(a, b, gap){
-  var dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
-  if (gap) return (L < 1e-9 ? 'the shapes touch or overlap' : 'gap ' + L.toFixed(3)) + '  \u0394X ' + dx.toFixed(3) + '  \u0394Y ' + dy.toFixed(3);
-  return 'L ' + L.toFixed(3) + '  \u0394X ' + dx.toFixed(3) + '  \u0394Y ' + dy.toFixed(3) + '  \u2220 ' + (Math.atan2(dy, dx)*180/Math.PI).toFixed(2) + '\u00b0';
+  var dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy), u = ' ' + unitTag(), dp = dispIn() ? 4 : 3;
+  if (gap) return (L < 1e-9 ? 'the shapes touch or overlap' : 'gap ' + fmtDisp(L, dp) + u) +
+                  '  \u0394X ' + fmtDisp(dx, dp) + '  \u0394Y ' + fmtDisp(dy, dp);
+  return 'L ' + fmtDisp(L, dp) + u + '  \u0394X ' + fmtDisp(dx, dp) + '  \u0394Y ' + fmtDisp(dy, dp) +
+         '  \u2220 ' + (Math.atan2(dy, dx)*180/Math.PI).toFixed(2) + '\u00b0';
 }
 
 // Corner reliefs so a square-cornered part can fit into a slot cut with a round bit.
@@ -5436,8 +5464,8 @@ function entDims(e){
 
 /* ---------------- live dimension readout ---------------- */
 function updateReadout(){
-  document.getElementById('fx').textContent = MOUSE.snap ? MOUSE.snap.x.toFixed(2) : '—';
-  document.getElementById('fy').textContent = MOUSE.snap ? MOUSE.snap.y.toFixed(2) : '—';
+  document.getElementById('fx').textContent = MOUSE.snap ? fmtDisp(MOUSE.snap.x) : '—';
+  document.getElementById('fy').textContent = MOUSE.snap ? fmtDisp(MOUSE.snap.y) : '—';
   var d = '';
   if (TOOL === 'measure'){
     if (DRAW && DRAW.stage === 'meas1' && MOUSE.snap) d = measText(DRAW.a, MOUSE.snap, false);
@@ -6467,7 +6495,7 @@ function wire(){
   // standing radius, so every keystroke that parses to a positive number updates it immediately.
   pin.addEventListener('input', function(){
     if (TOOL !== 'fillet') return;
-    var v = parseFloat(pin.value);
+    var v = lenIn(pin.value);                 // document units, or whatever unit is typed
     if (!isNaN(v) && v > 0 && isFinite(v) && v <= 10000){
       UICFG.filletR = v;
       uiCfgSave();
@@ -6613,7 +6641,10 @@ function wire(){
     // any printable char while a tool is live routes into the entry bar
     if (TOOL !== 'select' && e.key.length === 1 && !e.ctrlKey && !e.altKey){
       document.getElementById('promptBar').classList.add('on');
-      document.getElementById('floatIn').hidden = false;    // typing opens the box at the cursor
+      var fbox = document.getElementById('floatIn');
+      fbox.hidden = false;                                  // typing opens the box at the cursor
+      if (!document.getElementById('floatTag').textContent)
+        document.getElementById('floatTag').textContent = unitTag();
       placeFloatIn();
       pinEl.focus();
       pinEl.value += e.key;
