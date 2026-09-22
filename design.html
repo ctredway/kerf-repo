@@ -209,6 +209,19 @@
 
   #cv{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
 
+  #offPanel{position:absolute;top:12px;right:12px;z-index:9;width:214px;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:10px 12px;box-shadow:0 8px 28px rgba(0,0,0,.45)}
+  #offPanel[hidden]{display:none}
+  #offPanel h3{font-size:14px}
+  #offDist{width:72px;margin-left:auto;background:var(--bg);border:1px solid var(--line);border-radius:4px;color:var(--ink);font-family:var(--mono);font-size:12px;padding:2px 5px}
+  #mirPanel{position:absolute;top:12px;right:12px;z-index:9;width:214px;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:10px 12px;box-shadow:0 8px 28px rgba(0,0,0,.45)}
+  #mirPanel[hidden]{display:none}
+  #mirPanel h3{font-size:14px}
+  .mirSlot{display:flex;align-items:center;gap:8px;width:100%;text-align:left;margin-top:7px;padding:6px 8px;background:var(--panel-deep);border:1px solid var(--line);border-radius:5px;color:var(--ink);cursor:pointer}
+  .mirSlot[aria-pressed=true]{border-color:var(--amber);background:rgba(232,163,61,.12)}
+  .mirLbl{font-size:12.5px;color:var(--muted)}
+  .mirVal{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink)}
+  .mirHint{font-size:11.5px;color:var(--muted);line-height:1.45;margin:8px 0 0}
+  .mirBtns{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
   #floatIn{position:absolute;z-index:8;display:flex;align-items:center;gap:5px;background:rgba(20,24,29,.96);border:1px solid var(--amber);border-radius:5px;padding:3px 6px;box-shadow:0 4px 18px rgba(0,0,0,.45)}
   #floatIn[hidden]{display:none}
   #floatIn input{width:96px;background:none;border:0;outline:none;color:var(--ink);font-family:var(--mono);font-size:13px;padding:2px 0}
@@ -382,6 +395,21 @@
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
     <div id="promptHint"></div>
+    <div id="offPanel" hidden role="dialog" aria-label="Offset">
+      <div class="modalHead"><h3>Offset</h3><button class="modalX" id="offX" title="Cancel (Esc)" aria-label="Cancel">✕</button></div>
+      <button class="mirSlot" id="offObjs"><span class="mirLbl">Objects</span><span class="mirVal" id="offObjsVal">none</span></button>
+      <div class="mirSlot" style="cursor:default"><span class="mirLbl"><label for="offDist">Distance</label></span><input id="offDist" type="text" inputmode="decimal" autocomplete="off"><span class="mirVal" id="offUnit">mm</span></div>
+      <button class="mirSlot" id="offFlip"><span class="mirLbl">Direction</span><span class="mirVal" id="offDir">outward</span></button>
+      <p class="mirHint" id="offHint"></p>
+      <div class="mirBtns"><button id="offCancel">Cancel</button><button id="offOk" class="primary">OK</button></div>
+    </div>
+    <div id="mirPanel" hidden role="dialog" aria-label="Mirror">
+      <div class="modalHead"><h3>Mirror</h3><button class="modalX" id="mirX" title="Cancel (Esc)" aria-label="Cancel">✕</button></div>
+      <button class="mirSlot" id="mirObjs"><span class="mirLbl">Objects</span><span class="mirVal" id="mirObjsVal">none</span></button>
+      <button class="mirSlot" id="mirLine"><span class="mirLbl">Mirror line</span><span class="mirVal" id="mirLineVal">none</span></button>
+      <p class="mirHint" id="mirHint"></p>
+      <div class="mirBtns"><button id="mirCancel">Cancel</button><button id="mirOk" class="primary">OK</button></div>
+    </div>
     <div id="floatIn" hidden><span id="floatTag"></span><input id="promptIn" autocomplete="off" spellcheck="false"><button id="floatDel" hidden title="Delete this dimension">✕</button></div>
     <div id="promptBar">
       <label id="promptLbl">value</label>
@@ -431,7 +459,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.51.1'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.55.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -1081,7 +1109,7 @@ function pickEntity(w){
 /* ---------------- undo ---------------- */
 function docSnap(){ return JSON.stringify({ents:DOC.ents, guides:DOC.guides, dims:DOC.dims || []}); }
 function docRestore(str){ var s=JSON.parse(str); DOC.ents=s.ents; DOC.guides=s.guides; DOC.dims=s.dims || []; }
-function pushUndo(){ UNDO.push(docSnap()); if (UNDO.length>200) UNDO.shift(); REDO = []; }
+function pushUndo(){ if (typeof DRY !== 'undefined' && DRY) return; UNDO.push(docSnap()); if (UNDO.length>200) UNDO.shift(); REDO = []; }
 function doUndo(){ if (!UNDO.length) return; REDO.push(docSnap()); docRestore(UNDO.pop()); SEL=[]; draw(); persist(); }
 function doRedo(){ if (!REDO.length) return; UNDO.push(docSnap()); docRestore(REDO.pop()); SEL=[]; draw(); persist(); }
 
@@ -1130,7 +1158,7 @@ var STAGE_LABEL = {
   offset0:'Offset \u2014 select or click shapes, then type the distance: "+2" outward copy, "-1.5" inward',
   copy0:  'Copy \u2014 click base point, or type the offset "@dx,dy"',
   copy1:  'Copy \u2014 click destination, or type "x,y" / "@dx,dy"',
-  mirror0:'Mirror \u2014 H = left\u2194right copy, V = up\u2195down copy \u00b7 HH/VV = flip in place \u00b7 click a construction line to mirror across it \u00b7 or click 2 points of the axis',
+  mirror0:'Mirror (Shift+M) \u2014 H = left\u2194right copy, V = up\u2195down copy \u00b7 HH/VV = flip in place \u00b7 click a construction line to mirror about it (selecting it too is fine) ',
   mirror1:'Mirror \u2014 click the second point of the axis (mirrored copy)',
   rotate0:'Rotate \u2014 click the rotation center, or type "x,y"',
   rotate1:'Rotate \u2014 type the angle in degrees (+ CCW, \u2212 CW)',
@@ -1226,15 +1254,22 @@ function hoverTrim(w){
   var idx = pickEntity(w);
   if (idx === null) return {action:'none'};
   var e = DOC.ents[idx];
-  if (e.t === 'line' || e.t === 'circle' || e.t === 'arc' || e.t === 'poly' || e.t === 'path')
-    return {action:'do', hint:'trim', idx:idx};
+  if (e.t === 'line' || e.t === 'circle' || e.t === 'arc' || e.t === 'poly' || e.t === 'path'){
+    var gone = trimPreview(w);
+    if (!gone || !gone.length) return {action:'none', hint:'nothing crosses this to trim to', at:{x:w.x, y:w.y}};
+    return {action:'do', hint:'trim', idx:idx, cut:gone};
+  }
   return {action:'none'};
 }
 function hoverExtend(w){
   var idx = pickEntity(w);
   if (idx === null) return {action:'none'};
   var e = DOC.ents[idx];
-  if (e.t === 'line' || e.t === 'arc') return {action:'do', hint:'extend', idx:idx};
+  if (e.t === 'line' || e.t === 'arc'){
+    var add = extendPreview(w);
+    if (!add || !add.length) return {action:'none', hint:'nothing ahead to extend to', at:{x:w.x, y:w.y}};
+    return {action:'do', hint:'extend', idx:idx, grow:add};
+  }
   return {action:'none', hint:'extend needs a line or arc'};
 }
 var HOVER = null; // last computed hover status, for cursor feedback in draw()
@@ -1404,6 +1439,8 @@ function toolMgrEnter(t){
   var desc = TOOLS[t] || TOOLS.select;
   // clean slate: no leftover in-progress geometry, no stolen focus, field cleared
   DRAW = null;
+  if (t !== 'mirror' && MIR) mirClose();
+  if (t !== 'offset' && OFF) offClose();
   if (t !== 'node') NODE = null;
   HANDLES.active = false;
   MEAS = null;
@@ -1416,6 +1453,8 @@ function toolMgrEnter(t){
   if (!desc.keepSel) SEL = [];
   HOVER = null;
   if (desc.prompt) stagePrompt(desc.prompt);
+  if (t === 'mirror' && !MIR) mirOpen();            // the panel is the tool
+  if (t === 'offset' && !OFF) offOpen();
   // reflect in the panel
   document.querySelectorAll('#toolPanel .tool[data-tool]').forEach(function(b){
     b.classList.toggle('active', b.dataset.tool === t);
@@ -1506,6 +1545,7 @@ function toolClick(w, snap){
     }
   }
   else if (TOOL === 'offset'){
+    if (OFF){ offClick(w); return; }                 // the panel owns the picking
     var oh = pickEntity(w);
     if (oh !== null){
       if (MOUSE.shift) selToggle(oh);
@@ -1521,13 +1561,23 @@ function toolClick(w, snap){
     }
   }
   else if (TOOL === 'mirror'){
+    if (MIR){ mirClick(w); return; }
     if (!SEL.length){ stagePrompt('selFirst'); }
     else if (!DRAW){
       var mh = pickEntity(w);
-      if (mh !== null && DOC.ents[mh].t === 'line' && DOC.ents[mh].con && SEL.indexOf(mh) < 0){
+      if (mh !== null && DOC.ents[mh].t === 'line' && DOC.ents[mh].con){
         var cl = DOC.ents[mh];
         var cvx = cl.x2-cl.x1, cvy = cl.y2-cl.y1, cvl = Math.hypot(cvx,cvy);
         if (cvl > 1e-6){
+          // The axis line may itself be selected (selecting the shape and its centre line is the
+          // natural way to work): mirror everything else and leave the line where it is.
+          var keep = SEL.slice(), axisWasSel = SEL.indexOf(mh) >= 0;
+          if (axisWasSel) SEL = SEL.filter(function(i){ return i !== mh; });
+          if (!SEL.length){
+            SEL = keep;
+            toast('info', 'Nothing to mirror', 'Select the shapes to mirror as well as the construction line, then click the line.');
+            return;
+          }
           applySel(true, (function(px2,py2,ux2,uy2){ return function(en){ mirrorEnt(en, px2, py2, ux2, uy2); }; })(cl.x1, cl.y1, cvx/cvl, cvy/cvl));
           stagePrompt('mirror0'); persist();
           return;
@@ -3056,6 +3106,7 @@ function dxfToDoc(ex, scale, toOrigin, keepStock){
    Status and error messages. Dismissed only by the user (no auto-hide) so a
    failure can't scroll past unnoticed. */
 function toast(kind, title, detail){
+  if (typeof DRY !== 'undefined' && DRY) return null;          // previews never talk
   var wrap = document.getElementById('toastWrap');
   if (!wrap) return;
   var el = document.createElement('div');
@@ -3435,6 +3486,51 @@ function draw(){
     ctx.restore();
   }
 
+  // ---- trim / extend preview: red disappears, green is added ----
+  if (HOVER && (HOVER.cut || HOVER.grow)){
+    var runs = HOVER.cut || HOVER.grow;
+    ctx.save();
+    ctx.strokeStyle = HOVER.cut ? '#e06c5a' : '#7fb069';
+    ctx.lineWidth = HOVER.cut ? 3 : 2.5;
+    ctx.setLineDash(HOVER.cut ? [] : [5,4]);
+    runs.forEach(function(run){
+      ctx.beginPath();
+      var q0 = w2s(run[0][0], run[0][1]); ctx.moveTo(q0.x, q0.y);
+      for (var ri = 1; ri < run.length; ri++){ var q = w2s(run[ri][0], run[ri][1]); ctx.lineTo(q.x, q.y); }
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  // ---- offset preview ----
+  if (TOOL === 'offset' && OFF){
+    var offRes = offResults();
+    if (offRes.length){
+      ctx.save(); ctx.strokeStyle = 'rgba(232,163,61,.85)'; ctx.lineWidth = 1.5; ctx.setLineDash([5,4]);
+      offRes.forEach(function(ne){ drawEntityOutline(ne); });
+      ctx.restore();
+    }
+  }
+
+  // ---- mirror preview ----
+  if (TOOL === 'mirror' && MIR){
+    var mAx = mirAxis();
+    if (MIR.line !== null && DOC.ents[MIR.line]){
+      ctx.save(); ctx.strokeStyle = '#7fb069'; ctx.lineWidth = 2.5; ctx.setLineDash([]);
+      drawEntityOutline(DOC.ents[MIR.line]); ctx.restore();
+    }
+    if (mAx && MIR.objs.length){
+      ctx.save(); ctx.strokeStyle = 'rgba(232,163,61,.85)'; ctx.lineWidth = 1.5; ctx.setLineDash([5,4]);
+      MIR.objs.forEach(function(i){
+        if (!DOC.ents[i]) return;
+        var gc = cloneEnt(DOC.ents[i]);
+        mirrorEnt(gc, mAx.x, mAx.y, mAx.ux, mAx.uy);
+        drawEntityOutline(gc);
+      });
+      ctx.restore();
+    }
+  }
+
   // ---- measure tool ----
   if (TOOL === 'measure'){
     var ma = null, mb = null, mgap = false;
@@ -3662,6 +3758,196 @@ function draw(){
   }
 }
 // stroke just the outline path of an entity (no fill), in the CURRENT ctx style
+// Offset, with the same shape of panel: what to offset, how far, which way, with a preview.
+var OFF = null;
+function offOpen(){
+  OFF = {objs: SEL.filter(function(i){ return DOC.ents[i]; }), dist: UICFG.lastOffset || 5, flip:false};
+  document.getElementById('offPanel').hidden = false;
+  document.getElementById('offDist').value = fmtDisp(OFF.dist);
+  offRender();
+}
+function offClose(){ OFF = null; document.getElementById('offPanel').hidden = true; draw(); }
+function offResults(){
+  if (!OFF || !OFF.objs.length || !(Math.abs(OFF.dist) > 1e-9)) return [];
+  var d = OFF.flip ? -OFF.dist : OFF.dist, out = [];
+  OFF.objs.forEach(function(i){
+    var e = DOC.ents[i];
+    if (!e || e.t === 'text') return;
+    var ne = offsetEnt(e, d);
+    if (ne){ if (e.tp) ne.tp = true; if (e.con) ne.con = true; out.push(ne); }
+  });
+  return out;
+}
+function offRender(){
+  if (!OFF) return;
+  document.getElementById('offObjsVal').textContent = OFF.objs.length ? OFF.objs.length + (OFF.objs.length === 1 ? ' shape' : ' shapes') : 'none';
+  document.getElementById('offObjs').setAttribute('aria-pressed', 'true');
+  document.getElementById('offUnit').textContent = unitTag();
+  document.getElementById('offDir').textContent = OFF.flip ? 'inward' : 'outward';
+  var res = offResults();
+  document.getElementById('offOk').disabled = !res.length;
+  var texts = OFF.objs.filter(function(i){ return DOC.ents[i] && DOC.ents[i].t === 'text'; }).length;
+  document.getElementById('offHint').textContent = !OFF.objs.length
+    ? 'Click shapes on the drawing to offset.'
+    : (texts ? 'Text can\u2019t be offset \u2014 convert it to curves first. ' : '') +
+      (res.length ? 'Direction flips which side the new shape goes.' : 'That distance doesn\u2019t leave a usable shape \u2014 try a smaller one.');
+  SEL = OFF.objs.slice();
+  draw();
+}
+function offApply(){
+  var res = offResults();
+  if (!res.length) return;
+  pushUndo();
+  var made = [];
+  res.forEach(function(ne){ made.push(DOC.ents.length); DOC.ents.push(ne); });
+  SEL = made;
+  UICFG.lastOffset = OFF.dist; uiCfgSave();
+  persist();
+  toast('ok', 'Offset', made.length + (made.length === 1 ? ' shape' : ' shapes') + ' at ' + fmtDisp(OFF.dist) + ' ' + unitTag() + '.');
+  offClose();
+  setTool('select');
+}
+function offClick(w){
+  var h = pickEntity(w);
+  if (h === null) return;
+  var at = OFF.objs.indexOf(h);
+  if (at >= 0) OFF.objs.splice(at, 1); else OFF.objs.push(h);
+  offRender();
+}
+// Mirror, the way Fusion does it: a panel with the things to mirror and the line to mirror
+// about. The panel floats beside the drawing, so picking on the canvas keeps working.
+var MIR = null;
+function mirOpen(){
+  MIR = {objs: SEL.filter(function(i){ return DOC.ents[i] && !(DOC.ents[i].t === 'line' && DOC.ents[i].con); }),
+         line: null, slot: 'objs'};
+  var pre = SEL.filter(function(i){ return DOC.ents[i] && DOC.ents[i].t === 'line'; });   // a line already picked
+  if (pre.length === 1 && MIR.objs.length) MIR.line = pre[0];
+  if (MIR.objs.length) MIR.slot = MIR.line === null ? 'line' : 'objs';
+  document.getElementById('mirPanel').hidden = false;
+  mirRender();
+}
+function mirClose(){
+  MIR = null;
+  document.getElementById('mirPanel').hidden = true;
+  draw();
+}
+function mirRender(){
+  if (!MIR) return;
+  var oV = document.getElementById('mirObjsVal'), lV = document.getElementById('mirLineVal');
+  oV.textContent = MIR.objs.length ? MIR.objs.length + (MIR.objs.length === 1 ? ' shape' : ' shapes') : 'none';
+  lV.textContent = MIR.line === null ? 'none' : (DOC.ents[MIR.line] && DOC.ents[MIR.line].con ? 'construction line' : 'line');
+  document.getElementById('mirObjs').setAttribute('aria-pressed', MIR.slot === 'objs' ? 'true' : 'false');
+  document.getElementById('mirLine').setAttribute('aria-pressed', MIR.slot === 'line' ? 'true' : 'false');
+  document.getElementById('mirHint').textContent = MIR.slot === 'objs'
+    ? 'Click shapes on the drawing to add or remove them.'
+    : 'Click a line to mirror about \u2014 construction lines work well for this.';
+  document.getElementById('mirOk').disabled = !(MIR.objs.length && MIR.line !== null);
+  SEL = MIR.objs.slice();                            // selected shapes stay highlighted as usual
+  draw();
+}
+function mirAxis(){
+  var e = MIR && MIR.line !== null ? DOC.ents[MIR.line] : null;
+  if (!e || e.t !== 'line') return null;
+  var vx = e.x2 - e.x1, vy = e.y2 - e.y1, L = Math.hypot(vx, vy);
+  return L < 1e-9 ? null : {x:e.x1, y:e.y1, ux:vx/L, uy:vy/L};
+}
+function mirApply(){
+  var ax = mirAxis();
+  if (!MIR || !MIR.objs.length || !ax) return;
+  pushUndo();
+  var made = [];
+  MIR.objs.forEach(function(i){
+    var c = cloneEnt(DOC.ents[i]);
+    mirrorEnt(c, ax.x, ax.y, ax.ux, ax.uy);
+    made.push(DOC.ents.length);
+    DOC.ents.push(c);
+  });
+  SEL = made;
+  persist();
+  toast('ok', 'Mirrored', made.length + (made.length === 1 ? ' copy' : ' copies') + ' made. The originals and the mirror line are untouched.');
+  mirClose();
+  setTool('select');
+}
+function mirClick(w){                                 // a canvas click while the panel is open
+  var h = pickEntity(w);
+  if (h === null) return;
+  if (MIR.slot === 'objs'){
+    if (h === MIR.line){ toast('info', 'That is the mirror line', 'Pick a different shape, or change the mirror line first.'); return; }
+    var at = MIR.objs.indexOf(h);
+    if (at >= 0) MIR.objs.splice(at, 1); else MIR.objs.push(h);
+  } else {
+    if (DOC.ents[h].t !== 'line'){ toast('info', 'Pick a line', 'The mirror line has to be a line. A construction line (X) is the usual choice.'); return; }
+    MIR.line = h;
+    MIR.objs = MIR.objs.filter(function(i){ return i !== h; });
+    if (!MIR.objs.length) MIR.slot = 'objs';
+  }
+  mirRender();
+}
+// PREVIEWS FOR TRIM AND EXTEND
+// The preview runs the real operation on a throwaway copy of the affected shape and then shows
+// the difference, so what is highlighted is exactly what will happen: no second implementation
+// to drift out of step.
+var DRY = false;
+function dryEdit(idx, fn){
+  var savedEnts = DOC.ents, savedDims = DOC.dims;
+  DOC.ents = savedEnts.slice();                    // only the target is replaced, so a shallow copy is enough
+  DOC.ents[idx] = cloneEnt(savedEnts[idx]);
+  DOC.dims = (savedDims || []).slice();
+  DRY = true;
+  var ok = false, after = null;
+  try { ok = fn(); after = DOC.ents; } catch (err) { ok = false; }
+  DRY = false;
+  DOC.ents = savedEnts; DOC.dims = savedDims;
+  return ok ? after : null;
+}
+function samplePts(e, n){                          // an ordered run of points along a shape
+  n = n || 160;
+  var out = [];
+  if (e.t === 'line'){ for (var i = 0; i <= n; i++) out.push([e.x1 + (e.x2-e.x1)*i/n, e.y1 + (e.y2-e.y1)*i/n]); }
+  else if (e.t === 'circle'){ for (var k = 0; k <= n; k++){ var a = k/n*2*Math.PI; out.push([e.cx + e.r*Math.cos(a), e.cy + e.r*Math.sin(a)]); } }
+  else if (e.t === 'arc'){ var sw = arcSweepOf(e.a0, e.a1, e.ccw); for (var j = 0; j <= n; j++){ var q = arcPtAt(e, sw*j/n); out.push([q.x, q.y]); } }
+  else if (e.t === 'path'){ out = tessPath(e, 0.08).map(function(q){ return [q[0], q[1]]; }); if (e.closed && out.length) out.push(out[0]); }
+  else if (e.t === 'poly'){ out = e.pts.map(function(q){ return [q[0], q[1]]; }); if (e.closed && out.length) out.push(out[0]); }
+  else if (e.t === 'rect'){ out = [[e.x,e.y],[e.x+e.w,e.y],[e.x+e.w,e.y+e.h],[e.x,e.y+e.h],[e.x,e.y]]; }
+  return out;
+}
+function ptsToSegs(list){
+  var segs = [];
+  list.forEach(function(pts){ for (var i = 0; i + 1 < pts.length; i++) segs.push([pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]]); });
+  return segs;
+}
+// the parts of `pts` that no segment in `segs` covers, as runs of points
+function partsAwayFrom(pts, segs, tol){
+  var runs = [], run = [];
+  pts.forEach(function(p){
+    var on = false;
+    for (var i = 0; i < segs.length && !on; i++) if (distToSeg(p[0], p[1], segs[i][0], segs[i][1], segs[i][2], segs[i][3]) < tol) on = true;
+    if (on){ if (run.length > 1) runs.push(run); run = []; }
+    else run.push(p);
+  });
+  if (run.length > 1) runs.push(run);
+  return runs;
+}
+function trimPreview(w){
+  var idx = pickEntity(w);
+  if (idx === null || !DOC.ents[idx]) return null;
+  var orig = DOC.ents[idx];
+  var after = dryEdit(idx, function(){ return doTrim(w); });
+  if (!after) return null;
+  var grew = after.length - DOC.ents.length;
+  var kept = after.slice(idx, idx + 1 + grew).filter(Boolean);
+  var keptSegs = ptsToSegs(kept.map(function(k){ return samplePts(k); }));
+  return partsAwayFrom(samplePts(orig), keptSegs, 0.08);      // what disappears
+}
+function extendPreview(w){
+  var idx = pickEntity(w);
+  if (idx === null || !DOC.ents[idx]) return null;
+  var orig = DOC.ents[idx];
+  var after = dryEdit(idx, function(){ return doExtend(w); });
+  if (!after || !after[idx]) return null;
+  var origSegs = ptsToSegs([samplePts(orig)]);
+  return partsAwayFrom(samplePts(after[idx]), origSegs, 0.08); // what gets added
+}
 function drawEntityOutline(e){
   ctx.beginPath();
   if (e.t === 'line'){ var a=w2s(e.x1,e.y1), b=w2s(e.x2,e.y2); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); }
@@ -6099,6 +6385,26 @@ function wire(){
   }
   function closeSettings(){ settingsModal.hidden = true; }
   document.getElementById('settingsBtn').addEventListener('click', openSettings);
+  document.getElementById('offObjs').addEventListener('click', function(){ if (OFF) offRender(); });
+  document.getElementById('offFlip').addEventListener('click', function(){ if (OFF){ OFF.flip = !OFF.flip; offRender(); } });
+  document.getElementById('offDist').addEventListener('input', function(e){
+    if (!OFF) return;
+    var v = lenIn(e.target.value);
+    if (!isNaN(v) && Math.abs(v) > 1e-9) OFF.dist = Math.abs(v);
+    offRender();
+  });
+  document.getElementById('offDist').addEventListener('keydown', function(e){
+    if (e.key === 'Enter'){ e.preventDefault(); offApply(); }
+    e.stopPropagation();
+  });
+  document.getElementById('offOk').addEventListener('click', offApply);
+  document.getElementById('offCancel').addEventListener('click', function(){ offClose(); setTool('select'); });
+  document.getElementById('offX').addEventListener('click', function(){ offClose(); setTool('select'); });
+  document.getElementById('mirObjs').addEventListener('click', function(){ if (MIR){ MIR.slot = 'objs'; mirRender(); } });
+  document.getElementById('mirLine').addEventListener('click', function(){ if (MIR){ MIR.slot = 'line'; mirRender(); } });
+  document.getElementById('mirOk').addEventListener('click', mirApply);
+  document.getElementById('mirCancel').addEventListener('click', function(){ mirClose(); setTool('select'); });
+  document.getElementById('mirX').addEventListener('click', function(){ mirClose(); setTool('select'); });
   document.getElementById('libBtn').addEventListener('click', function(){ libOpen(); });
   document.getElementById('floatDel').addEventListener('click', function(){
     if (DRAW && DRAW.stage === 'dimValue') deleteDim(DRAW.di);
@@ -6582,6 +6888,8 @@ function wire(){
       }
       else if (DRAW){ DRAW = null; if (TOOL !== 'select') stagePrompt(TOOL + '0'); else hidePrompt(); }
       else if (NODE){ NODE = null; stagePrompt('node0'); }     // close an open node-edit shape
+      else if (MIR){ mirClose(); setTool('select'); }          // cancel the mirror
+      else if (OFF){ offClose(); setTool('select'); }          // cancel the offset
       else if (MEAS){ MEAS = null; }                           // clear the last measurement
       else if (TOOL !== 'select'){ setTool('select'); }
       else if (HANDLES.active){ HANDLES.active = false; }
