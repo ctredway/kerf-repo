@@ -205,6 +205,11 @@
 
   #cv{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
 
+  #floatIn{position:absolute;z-index:8;display:flex;align-items:center;gap:5px;background:rgba(20,24,29,.96);border:1px solid var(--amber);border-radius:5px;padding:3px 6px;box-shadow:0 4px 18px rgba(0,0,0,.45)}
+  #floatIn[hidden]{display:none}
+  #floatIn input{width:96px;background:none;border:0;outline:none;color:var(--ink);font-family:var(--mono);font-size:13px;padding:2px 0}
+  #floatTag{font-size:11px;color:var(--amber);font-family:var(--mono);white-space:nowrap}
+  #floatTag:empty{display:none}
   #promptBar{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;display:none;align-items:center;gap:8px;background:rgba(23,28,34,.95);border:1px solid var(--amber);border-radius:6px;padding:8px 12px;z-index:5}
   #promptBar.on{display:flex}
   #promptBar label{color:var(--muted);font-size:12.5px}
@@ -369,9 +374,9 @@
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
     <div id="promptHint"></div>
+    <div id="floatIn" hidden><span id="floatTag"></span><input id="promptIn" autocomplete="off" spellcheck="false"></div>
     <div id="promptBar">
       <label id="promptLbl">value</label>
-      <input id="promptIn" autocomplete="off" spellcheck="false">
       <span id="filletTypes" hidden role="group" aria-label="Corner type">
         <button data-ft="round">Round</button><button data-ft="dogbone">Dog-bone</button><button data-ft="tbone">T-bone</button>
       </span>
@@ -418,7 +423,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.46.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.47.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -818,8 +823,10 @@ function dimJustAdded(d){
   if (i < 0) return;
   DIMSEL = i;
   DRAW = {stage:'dimValue', di:i};
-  var cur = dimValue(d);
-  showPrompt(STAGE_LABEL[d.kind === 'pair' ? 'dimEditV' : 'dimEditS'], cur === null ? '' : cur.toFixed(2), true);
+  var cur = dimValue(d), an = dimAnchor(d);
+  if (an) floatAtWorld(an.x, an.y);                 // the box opens on the dimension itself
+  showPrompt(STAGE_LABEL[d.kind === 'pair' ? 'dimEditV' : 'dimEditS'], cur === null ? '' : cur.toFixed(2), true,
+             d.kind === 'dia' ? '\u00d8' : d.kind === 'rad' ? 'R' : 'mm');
   draw();
 }
 function addDim(d){
@@ -1496,7 +1503,9 @@ function toolClick(w, snap){
           DIMSEL = dh;
           DRAW = {stage:'dimValue', di:dh};
           var cv0 = dimValue(DOC.dims[dh]);
-          showPrompt(STAGE_LABEL.dimEditV, cv0 === null ? '' : cv0.toFixed(2), true);
+          FLOAT_AT = {x:hh.x, y:hh.y};
+          showPrompt(STAGE_LABEL.dimEditV, cv0 === null ? '' : cv0.toFixed(2), true,
+                     DOC.dims[dh].kind === 'dia' ? '\u00d8' : DOC.dims[dh].kind === 'rad' ? 'R' : 'mm');
           draw(); return;
         }
       }
@@ -1944,11 +1953,29 @@ function toolCommitText(txt){
 }
 
 /* ---------------- prompt / hint ---------------- */
-function showPrompt(label, val, selectAll){
+// Where the floating value box should sit, in canvas pixels. Callers set FLOAT_AT for a
+// specific spot (the dimension just placed, the corner just clicked); otherwise it follows
+// the cursor, so what you type appears where you are looking.
+var FLOAT_AT = null;
+function floatAtWorld(x, y){ var p = w2s(x, y); FLOAT_AT = {x:p.x, y:p.y}; }
+function placeFloatIn(){
+  var box = document.getElementById('floatIn'), cvEl = document.getElementById('cv');
+  if (!box || box.hidden) return;
+  var at = FLOAT_AT || {x: MOUSE.mx, y: MOUSE.my};
+  var w = box.offsetWidth || 150, h = box.offsetHeight || 28;
+  var maxX = (cvEl.clientWidth || 800) - w - 8, maxY = (cvEl.clientHeight || 600) - h - 8;
+  box.style.left = Math.max(8, Math.min(at.x + 16, maxX)) + 'px';
+  box.style.top  = Math.max(8, Math.min(at.y - h - 10, maxY)) + 'px';
+}
+function showPrompt(label, val, selectAll, tag){
   document.getElementById('promptLbl').textContent = label;
   var i = document.getElementById('promptIn');
   i.value = val || '';
   document.getElementById('promptBar').classList.add('on');
+  document.getElementById('floatTag').textContent = tag || '';
+  var box = document.getElementById('floatIn');
+  box.hidden = !selectAll;            // click-only prompts don't need a box hovering over the drawing
+  placeFloatIn();
   // Do NOT auto-focus: focusing here steals the first canvas click from click-based tools
   // (trim, extend, fillet corners). The field receives focus when the user starts typing.
   if (selectAll){ i.focus(); i.select(); }
@@ -1957,6 +1984,8 @@ function hidePrompt(){
   document.getElementById('promptBar').classList.remove('on');
   document.getElementById('promptHint').classList.remove('on');
   document.getElementById('promptIn').blur();
+  document.getElementById('floatIn').hidden = true;
+  FLOAT_AT = null;
 }
 function showHint(t){
   var h = document.getElementById('promptHint');
@@ -6287,6 +6316,7 @@ function wire(){
   cv.addEventListener('pointermove', function(e){
     var r = cv.getBoundingClientRect();
     MOUSE.mx = e.clientX - r.left; MOUSE.my = e.clientY - r.top;
+    if (!FLOAT_AT && document.activeElement !== document.getElementById('promptIn')) placeFloatIn();
     if (pan){
       VIEW.ox += e.clientX - pan.x; VIEW.oy += e.clientY - pan.y;
       pan = {x:e.clientX, y:e.clientY};
@@ -6549,6 +6579,8 @@ function wire(){
     // any printable char while a tool is live routes into the entry bar
     if (TOOL !== 'select' && e.key.length === 1 && !e.ctrlKey && !e.altKey){
       document.getElementById('promptBar').classList.add('on');
+      document.getElementById('floatIn').hidden = false;    // typing opens the box at the cursor
+      placeFloatIn();
       pinEl.focus();
       pinEl.value += e.key;
       e.preventDefault();
