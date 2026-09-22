@@ -418,7 +418,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.45.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.46.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -1314,11 +1314,14 @@ function curvesBtnClick(){
     toast('info', 'Select text first', 'Convert to curves turns selected text into shapes. Select one or more text objects, then press it.');
 }
 // Single source of truth for tool hotkeys — both the canvas handler and the entry field use this.
+// Keys follow Autodesk Fusion where Fusion has one: L line, R rectangle, C circle, T trim,
+// O offset, I measure, D dimension, X construction, F fillet, M move/copy. S is deliberately
+// left free (Fusion uses it for its command search). Tools Fusion has no key for keep ours,
+// with Shift+M mirror and Shift+R rotate sitting beside their unshifted partners.
 var TOOL_HOTKEYS = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide',
-                    f:'fillet', t:'trim', e:'extend', d:'copy', m:'mirror', o:'rotate',
-                    s:'offset', n:'node', y:'array', i:'dim', k:'text', q:'measure'};
-TOOL_HOTKEYS.d = 'dim';        // D opens dimensioning, as in Fusion
-TOOL_HOTKEYS.u = 'copy';       // copy moves off D
+                    f:'fillet', t:'trim', e:'extend', m:'copy', o:'offset', d:'dim',
+                    i:'measure', n:'node', y:'array', k:'text'};
+var SHIFT_HOTKEYS = {m:'mirror', r:'rotate'};
 // Is a typed letter a TOOL HOTKEY, or DATA for the active tool? Letters are data while an operation
 // is in progress (D5 diameter, R2.5 radius, E5 edge distance) and when the idle tool itself takes
 // letters (mirror's H / V / HH / VV). Otherwise a hotkey letter switches tools on the first press.
@@ -5664,7 +5667,7 @@ var PANEL_BTNS = {
  circle:{tool:'circle', icon:'circ', title:'Circle (C) \u2014 center then radius point, or type D5 for diameter'},
  arc:   {tool:'arc', icon:'arc', title:'Arc (A) \u2014 start point, end point, then bow it with the mouse (3-point) or type a radius; + bows left of start\u2192end, \u2212 right'},
  poly:  {tool:'poly', icon:'poly', title:'Polyline (P) \u2014 click points, Enter ends, click start to close'},
- measureT:{tool:'measure', icon:'measure', title:'Measure (Q) \u2014 click two points for distance and angle; Shift-click two shapes for the gap between them'},
+ measureT:{tool:'measure', icon:'measure', title:'Measure (I) \u2014 click two points for distance and angle; Shift-click two shapes for the gap between them'},
  textT: {tool:'text', icon:'text', title:'Text (K) \u2014 click where the text starts. To edit text later, click it with this tool, or double-click it twice with Select'},
  nestBtn:{id:'nestBtn', icon:'nest', title:'Nest parts \u2014 pack the selected parts (or everything, if nothing is selected) onto the material, with copies'},
  alMat:{id:'alMat', icon:'aMat', title:'Center in material (F9) \u2014 moves the selection, as a block, to the middle of the material'},
@@ -5682,16 +5685,16 @@ var PANEL_BTNS = {
  flipHBtn:{id:'flipHBtn', icon:'flipH', title:'Flip horizontal (Shift+H) \u2014 mirror the selection left to right, in place'},
  flipVBtn:{id:'flipVBtn', icon:'flipV', title:'Flip vertical (Shift+V) \u2014 mirror the selection top to bottom, in place'},
  curvesBtn:{id:'curvesBtn', icon:'curves', title:'Convert to curves \u2014 turn selected text into ordinary shapes you can trim, offset and cut'},
- offsetT:{tool:'offset', icon:'offs', title:'Offset (S) \u2014 select or click shapes, then type the distance: + outward, \u2212 inward (open shapes: + is left of travel)'},
+ offsetT:{tool:'offset', icon:'offs', title:'Offset (O) \u2014 select or click shapes, then type the distance: + outward, \u2212 inward (open shapes: + is left of travel)'},
  dimT:{tool:'dim', icon:'dim', title:'Dimension (D) \u2014 click a shape, then another, and type the distance: the second shape moves. Click one shape twice for its own size. Dimensions stay on the drawing and keep themselves up to date.'},
  nodeT:{tool:'node', icon:'node', title:'Edit nodes (N) \u2014 click a polyline to show its points; drag a point to move it, click a point or segment to type exact values'},
- groupBtn:{id:'groupBtn', icon:'group', title:'Group (G) \u2014 bundle the selected vectors into one object. All geometry is kept; it just selects and moves as one piece.'},
- ungroupBtn:{id:'ungroupBtn', icon:'ungroup', title:'Ungroup (U) \u2014 break a group back into its separate vectors'},
+ groupBtn:{id:'groupBtn', icon:'group', title:'Group (Ctrl+G) \u2014 bundle the selected vectors into one object. All geometry is kept; it just selects and moves as one piece.'},
+ ungroupBtn:{id:'ungroupBtn', icon:'ungroup', title:'Ungroup (Ctrl+U) \u2014 break a group back into its separate vectors'},
  joinBtn:{id:'joinBtn', icon:'join', title:'Join \u2014 stitch selected OPEN vectors whose ends meet into one continuous contour'},
  explodeBtn:{id:'explodeBtn', icon:'expl', title:'Explode \u2014 break a contour into its individual lines and arcs'},
- copyT: {tool:'copy', icon:'copy', title:'Copy (U) \u2014 select first (V), then click base point and destination, or type @dx,dy'},
- mirrorT:{tool:'mirror', icon:'mirror', title:'Mirror (M) \u2014 select first; type H or V for a mirrored copy across the selection center, HH/VV to flip in place, or click 2 points for a custom axis'},
- rotateT:{tool:'rotate', icon:'rotate', title:'Rotate (O) \u2014 select first; click the rotation center, then type the angle in degrees (+ CCW)'},
+ copyT: {tool:'copy', icon:'copy', title:'Copy (M) \u2014 select first (V), then click base point and destination, or type @dx,dy'},
+ mirrorT:{tool:'mirror', icon:'mirror', title:'Mirror (Shift+M) \u2014 select first; type H or V for a mirrored copy across the selection center, HH/VV to flip in place, or click 2 points for a custom axis'},
+ rotateT:{tool:'rotate', icon:'rotate', title:'Rotate (Shift+R) \u2014 select first; click the rotation center, then type the angle in degrees (+ CCW)'},
  arrayT:{tool:'array', icon:'array', title:'Array (Y) \u2014 select first; type N@dx,dy for a linear array, or click a center then type N<step\u00b0 for a circular one'},
  fillet:{tool:'fillet', icon:'fillet', title:'Fillet (F) \u2014 type a radius, then click a corner: a poly/rect corner, or where two lines meet'},
  trim:  {tool:'trim', icon:'trim', title:'Trim (T) \u2014 click the part of a line, arc, or circle to remove, bounded by crossings'},
@@ -6522,6 +6525,11 @@ function wire(){
     if (e.shiftKey && !e.ctrlKey && !e.altKey && TOOL === 'select' && SEL.length &&
         (e.key === 'H' || e.key === 'h' || e.key === 'V' || e.key === 'v')){
       e.preventDefault(); flipBtnRef(e.key.toLowerCase() === 'h'); return;
+    }
+    // Shift+M mirror, Shift+R rotate: the tools Fusion gives no key of their own
+    if (e.shiftKey && !e.ctrlKey && !e.altKey && e.key.length === 1 && SHIFT_HOTKEYS[e.key.toLowerCase()] &&
+        DRAW === null && document.activeElement !== document.getElementById('promptIn')){
+      e.preventDefault(); setTool(SHIFT_HOTKEYS[e.key.toLowerCase()]); return;
     }
     // construction toggle works whenever something is selected, whatever the active tool
     if ((e.key === 'x' || e.key === 'X') && SEL.length && !e.ctrlKey){
