@@ -127,6 +127,25 @@
   #toolPanel button.tool{width:100%;height:36px}
 
   #canvasWrap{grid-row:2;grid-column:2;position:relative;min-width:0;min-height:0}
+  #toolModal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:215}
+  #toolModal[hidden]{display:none}
+  #toolPanel2{background:var(--panel);border:1px solid var(--line);border-radius:8px;width:min(620px,94vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 14px 48px rgba(0,0,0,.55)}
+  #toolPanel2 .tdHead{display:flex;align-items:flex-start;gap:10px;padding:14px 18px 10px;border-bottom:1px solid var(--line)}
+  #toolPanel2 .tdHead h3{margin:0;font-size:16px}
+  #tdSub{font-size:12px;color:var(--muted);margin-top:3px}
+  #tdBody{overflow-y:auto;padding:6px 18px 14px;font-size:13px}
+  #tdBody h5{margin:14px 0 6px;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+  #tdBody dl{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin:0}
+  #tdBody dt{color:var(--muted)} #tdBody dd{margin:0;font-family:var(--mono);font-size:12px}
+  #tdBody table{border-collapse:collapse;width:100%;font-size:12px}
+  #tdBody th{text-align:left;color:var(--muted);font-weight:500;padding:4px 8px;border-bottom:1px solid var(--line)}
+  #tdBody td{padding:4px 8px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11.5px}
+  #tdBody tr.on td{background:rgba(232,163,61,.12)}
+  #tdBody td.ok{color:#7fb069} #tdBody td.warn{color:#d98e3f}
+  #tdBody .tdNote{color:var(--muted);font-size:12px;line-height:1.5;margin:6px 0 0}
+  #toolPanel2 .tdFoot{display:flex;gap:8px;justify-content:flex-end;padding:10px 18px;border-top:1px solid var(--line)}
+  .tpToolBtn{display:block;width:100%;text-align:left;background:none;border:0;border-radius:3px;padding:0;margin-top:3px;font:inherit;font-size:11.5px;color:var(--muted);cursor:pointer;line-height:1.4}
+  .tpToolBtn:hover{color:var(--ink);text-decoration:underline}
   #libModal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:210}
   #libModal[hidden]{display:none}
   #libPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;width:min(980px,94vw);height:min(680px,88vh);display:flex;flex-direction:column;box-shadow:0 14px 48px rgba(0,0,0,.55)}
@@ -298,6 +317,14 @@
 
   <div id="toolPanel"></div>
 
+  <div id="toolModal" hidden>
+    <div id="toolPanel2" role="dialog" aria-labelledby="tdTitle">
+      <div class="tdHead"><div style="flex:1"><h3 id="tdTitle">Tool</h3><div id="tdSub"></div></div><button id="tdClose" title="Close (Esc)">✕</button></div>
+      <div id="tdBody"></div>
+      <div class="tdFoot"><button id="tdLib">Open in tool library</button><button id="tdDone" class="primary">Close</button></div>
+    </div>
+  </div>
+
   <div id="libModal" hidden>
     <div id="libPanel" role="dialog" aria-labelledby="libTitle">
       <div class="libHead">
@@ -388,7 +415,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.43.1'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.44.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2152,7 +2179,12 @@ function renderToolpathPanel(){
     var h = document.createElement('div'); h.className = 'tpName'; h.textContent = tp.name;
     var ty = document.createElement('span'); ty.className = 'tpType'; ty.textContent = tp.type === 'Toolpath' ? 'type not recognized yet' : tp.type;
     h.appendChild(ty); card.appendChild(h);
-    var tl = document.createElement('div'); tl.className = 'tpTool';
+    var tl;
+    if (tp.tool){
+      tl = document.createElement('button'); tl.className = 'tpTool tpToolBtn';
+      tl.title = 'Show the details of this tool';
+      tl.addEventListener('click', function(){ openToolDetailsFor(tp); });
+    } else tl = document.createElement('div'), tl.className = 'tpTool';
     tl.textContent = tp.tool ? 'T' + tp.tool.num + ' \u00b7 ' + tp.tool.name + ' \u00b7 ' + tp.tool.rpm + ' rpm' : 'Tool not found in the file';
     card.appendChild(tl);
     if (TOOLLIB && tp.tool){
@@ -2165,8 +2197,8 @@ function renderToolpathPanel(){
         ? '\u26a0 Your library has this bit as T' + mr.libNum + ' (the project uses T' + tp.tool.num + ')'
         : '\u26a0 In your library, but with no tool number on ' + libMachineName(mid);
       else lb.textContent = 'Not in your tool library';
-      if (mr.tool){ lb.title = 'Open ' + mr.tool.name + ' in the tool library'; lb.addEventListener('click', function(){ libOpen(mr.tool.id); }); }
-      else { lb.disabled = true; lb.style.cursor = 'default'; }
+      lb.title = 'Show the details of this tool';
+      lb.addEventListener('click', function(){ openToolDetailsFor(tp); });
       card.appendChild(lb);
       var matId = tp.materialId && libMaterialName(tp.materialId) ? tp.materialId : null;
       var cut = mr.tool && matId ? libCutFor(mr.tool, mid, matId) : null;
@@ -2503,6 +2535,112 @@ function libImportFile(f){
     });
   };
   rd.readAsArrayBuffer(f);
+}
+
+// ---- Tool details: one bit, as the project uses it and as the library knows it ----
+// ctx = {ptool:{num,name,rpm}, machineId, materialId, usedBy:[{name,type}]}. Built to be reused
+// by CAM, where a toolpath's tool can be changed.
+var TD = null;
+function openToolDetails(ctx){
+  TD = ctx;
+  var pt = ctx.ptool || {}, mid = ctx.machineId, mat = ctx.materialId;
+  var mr = TOOLLIB ? libMatch(pt, mid) : {status:'nolib'}, lt = mr.tool || null;
+  function el(tag, txt, cls){ var e = document.createElement(tag); if (txt !== undefined && txt !== null) e.textContent = txt; if (cls) e.className = cls; return e; }
+  document.getElementById('tdTitle').textContent = pt.name || 'Tool';
+  document.getElementById('tdSub').textContent = 'T' + pt.num + (ctx.usedBy && ctx.usedBy.length
+    ? ' \u00b7 used by ' + ctx.usedBy.map(function(u){ return u.name; }).join(', ') : '');
+  var body = document.getElementById('tdBody');
+  body.innerHTML = '';
+  // --- project vs library ---
+  body.appendChild(el('h5', 'In this project and in your library'));
+  var tb = el('table'), hr = el('tr');
+  ['', 'Project', 'Tool library'].forEach(function(h){ hr.appendChild(el('th', h)); });
+  tb.appendChild(hr);
+  function cmp(label, pv, lv, state){
+    var tr = el('tr'); tr.appendChild(el('td', label));
+    tr.appendChild(el('td', pv)); tr.appendChild(el('td', lv, state || ''));
+    tb.appendChild(tr);
+  }
+  var libName = !TOOLLIB ? 'no library imported' : lt ? lt.name : 'not in your library';
+  cmp('Name', pt.name || '\u2014', libName, lt ? 'ok' : (TOOLLIB ? 'warn' : ''));
+  var ln = lt ? lt.numbers[mid] : undefined;
+  cmp('Tool number', 'T' + pt.num,
+      !lt ? '\u2014' : ln === undefined ? 'none on this machine' : 'T' + ln + (ln === pt.num ? '  \u2713' : '  \u2260'),
+      !lt ? '' : ln === pt.num ? 'ok' : 'warn');
+  var cut = lt && mat ? libCutFor(lt, mid, mat) : null;
+  cmp('Spindle speed', pt.rpm ? pt.rpm + ' rpm' : '\u2014',
+      cut && cut.rpm !== null ? cut.rpm + ' rpm' + (pt.rpm === cut.rpm ? '  \u2713' : '  \u2260') : '\u2014',
+      cut && cut.rpm !== null ? (pt.rpm === cut.rpm ? 'ok' : 'warn') : '');
+  body.appendChild(tb);
+  if (TOOLLIB){                                   // machine and material only mean something with a library
+    body.appendChild(el('p', 'Machine: ' + (libMachineName(mid) || '\u2014') + (ctx.machineFromProject ? ' (from the project)' : ' (your library\u2019s choice)') +
+      ' \u00b7 Material: ' + (mat ? libMaterialName(mat) + ' (from the project)' : 'not recorded in a way your library recognizes'), 'tdNote'));
+  }
+  if (!TOOLLIB){
+    body.appendChild(el('p', 'Import your VCarve tool library to see this bit\u2019s shape and feeds and speeds here.', 'tdNote'));
+  } else if (!lt){
+    body.appendChild(el('p', 'This bit isn\u2019t in your tool library, so its shape and cutting values can\u2019t be shown. The project keeps its own copy of them, in a form 454 can\u2019t read yet.', 'tdNote'));
+  }
+  // --- geometry ---
+  if (lt){
+    body.appendChild(el('h5', 'Shape'));
+    var u = lt.units === 'in' ? ' in' : ' mm', dl = el('dl');
+    function row(k, v){ if (v === null || v === undefined || v === '') return; dl.appendChild(el('dt', k)); dl.appendChild(el('dd', v)); }
+    row('Type', lt.typeName);
+    row('Diameter', lt.diameter !== null ? libTrim(lt.diameter) + u : null);
+    if (lt.angle !== null && lt.angle !== undefined) row(lt.type === 4 ? 'Side angle' : 'Angle', libTrim(lt.angle, 2) + '\u00b0');
+    if (lt.flat) row(lt.type === 4 ? 'Tip' : 'Flat diameter', libTrim(lt.flat) + u);
+    if (lt.tipRadius) row('Tip radius', libTrim(lt.tipRadius) + u);
+    row('Flutes', lt.flutes);
+    if (lt.fluteLength) row('Flute length', libTrim(lt.fluteLength) + u);
+    if (lt.notes) row('Notes', lt.notes);
+    body.appendChild(dl);
+    // --- feeds and speeds ---
+    body.appendChild(el('h5', 'Feeds and speeds \u2014 ' + libMachineName(mid)));
+    var cuts = lt.cuts.filter(function(c){ return c.machine === mid; });
+    if (!cuts.length) body.appendChild(el('p', 'Your library has no cutting data for this bit on this machine.', 'tdNote'));
+    else {
+      var ft = el('table'), fh = el('tr');
+      ['Material', 'Feed', 'Plunge', 'Spindle', 'Stepdown', 'Stepover'].forEach(function(h){ fh.appendChild(el('th', h)); });
+      ft.appendChild(fh);
+      cuts.forEach(function(c){
+        var ru = RATE_UNITS[c.rateUnits] || ('code ' + c.rateUnits), lu = c.lengthUnits === 'in' ? ' in' : ' mm', tr = el('tr');
+        if (mat && c.material === mat) tr.className = 'on';
+        [libMaterialName(c.material) || 'Any',
+         c.feed !== null ? libTrim(c.feed, 2) + ' ' + ru : '\u2014',
+         c.plunge !== null ? libTrim(c.plunge, 2) + ' ' + ru : '\u2014',
+         c.rpm !== null ? c.rpm + ' rpm' : '\u2014',
+         c.stepdown !== null ? libTrim(c.stepdown) + lu : '\u2014',
+         c.stepover !== null ? libTrim(c.stepover) + lu : '\u2014'].forEach(function(v){ tr.appendChild(el('td', v)); });
+        ft.appendChild(tr);
+      });
+      body.appendChild(ft);
+      if (mat) body.appendChild(el('p', 'The highlighted row is the project\u2019s material.', 'tdNote'));
+    }
+  }
+  // --- where it's used ---
+  if (ctx.usedBy && ctx.usedBy.length){
+    body.appendChild(el('h5', 'Used in this project by'));
+    var ul = el('dl');
+    ctx.usedBy.forEach(function(ub){ ul.appendChild(el('dt', ub.name)); ul.appendChild(el('dd', ub.type)); });
+    body.appendChild(ul);
+  }
+  var lb = document.getElementById('tdLib');
+  lb.style.display = lt ? '' : 'none';
+  document.getElementById('toolModal').hidden = false;
+  document.getElementById('tdDone').focus();
+}
+function closeToolDetails(){ document.getElementById('toolModal').hidden = true; TD = null; }
+// open the details for one toolpath's tool, with everything the project knows about it
+function openToolDetailsFor(tp){
+  var list = DOC.vcToolpaths || [];
+  var fromProj = !!(TOOLLIB && tp.machineId && libMachineName(tp.machineId));
+  var usedBy = list.filter(function(o){ return o.tool && tp.tool && o.tool.num === tp.tool.num && o.tool.name === tp.tool.name; })
+                   .map(function(o){ return {name:o.name, type:o.type === 'Toolpath' ? 'toolpath' : o.type}; });
+  openToolDetails({ptool:tp.tool, machineId: fromProj ? tp.machineId : (TOOLLIB ? libDefaultMachine() : null),
+                   machineFromProject: fromProj,
+                   materialId: TOOLLIB && tp.materialId && libMaterialName(tp.materialId) ? tp.materialId : null,
+                   usedBy: usedBy});
 }
 
 function crvExtract(buf){
@@ -5797,6 +5935,17 @@ function wire(){
   function closeSettings(){ settingsModal.hidden = true; }
   document.getElementById('settingsBtn').addEventListener('click', openSettings);
   document.getElementById('libBtn').addEventListener('click', function(){ libOpen(); });
+  document.getElementById('tdClose').addEventListener('click', closeToolDetails);
+  document.getElementById('tdDone').addEventListener('click', closeToolDetails);
+  document.getElementById('tdLib').addEventListener('click', function(){
+    var t = TD && TOOLLIB ? libMatch(TD.ptool, TD.machineId).tool : null;
+    closeToolDetails(); libOpen(t ? t.id : null);
+  });
+  document.getElementById('toolPanel2').addEventListener('keydown', function(e){
+    if (e.key === 'Escape'){ e.preventDefault(); closeToolDetails(); }
+    e.stopPropagation();
+  });
+  document.getElementById('toolModal').addEventListener('pointerdown', function(e){ if (e.target.id === 'toolModal') closeToolDetails(); });
   document.getElementById('libClose').addEventListener('click', libCloseDlg);
   document.getElementById('libImport').addEventListener('click', function(){ document.getElementById('libFile').click(); });
   document.getElementById('libFile').addEventListener('change', function(ev){
@@ -6236,6 +6385,7 @@ function wire(){
     if (!document.getElementById('textModal').hidden) return;   // the text dialog owns the keyboard
     if (!document.getElementById('nestModal').hidden) return;   // so does the nesting dialog
     if (!document.getElementById('libModal').hidden) return;    // and the tool library
+    if (!document.getElementById('toolModal').hidden) return;   // and tool details
     if (e.key === 'Escape' && !document.getElementById('msgPanel').hidden){ setMsgPanel(false); return; }
     var inField = e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA';
     // Ctrl-combos are global: they work from anywhere, including while an input has focus,
