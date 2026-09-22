@@ -418,7 +418,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.44.1'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.45.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -758,7 +758,7 @@ function dimValue(d){
   if (d.kind === 'pair'){
     var a = entById(d.a), b = entById(d.b);
     if (!a || !b) return null;
-    var r = relInfo(a, b);
+    var r = relInfo(a, b, d.aAt, d.bAt);
     if (r.kind !== 'dist') return null;
     var v = r.cur;
     if (d.edge){ var rad = relRadius(a, b); if (rad > 0) v = Math.max(0, v - rad); }
@@ -798,7 +798,7 @@ function dimApply(d, v){
   if (d.kind === 'pair'){
     var a = entById(d.a), b = entById(d.b);
     if (!a || !b) return false;
-    return relApply(a, b, v, d.edge);
+    return relApply(a, b, v, d.edge, d.aAt, d.bAt);
   }
   var e = entById(d.a);
   if (!e) return false;
@@ -811,6 +811,16 @@ function dimApply(d, v){
   if (d.kind === 'dia' && e.t === 'circle'){ e.r = v/2; return true; }
   if (d.kind === 'rad' && (e.t === 'circle' || e.t === 'arc')){ e.r = v; return true; }
   return false;
+}
+// A dimension has just been placed: open its value for typing, the way Fusion does.
+function dimJustAdded(d){
+  var i = dimsArr().indexOf(d);
+  if (i < 0) return;
+  DIMSEL = i;
+  DRAW = {stage:'dimValue', di:i};
+  var cur = dimValue(d);
+  showPrompt(STAGE_LABEL[d.kind === 'pair' ? 'dimEditV' : 'dimEditS'], cur === null ? '' : cur.toFixed(2), true);
+  draw();
 }
 function addDim(d){
   dimsArr().push(d);
@@ -1068,9 +1078,10 @@ var STAGE_LABEL = {
   trim0:  'Trim \u2014 click the piece to remove (lines, arcs, circles); crossings bound the cut',
   extend0:'Extend \u2014 click near the end of a line or arc to run it to the next crossing',
   node0:  'Edit nodes \u2014 click a polyline or path to show its points',
-  dim0:   'Dimension \u2014 click a shape for its size, or two shapes for the distance between them \u00b7 click an existing value to edit it',
-  dim1:   'Dimension \u2014 now click the second shape (or click the first again for its own size)',
-  dimEditV:'Dimension \u2014 type the new value; the geometry moves to match',
+  dim0:   'Dimension \u2014 click a shape, then another, to set the distance between them \u00b7 click one shape twice for its own size \u00b7 click an existing value to change it',
+  dim1:   'Dimension \u2014 now click what to measure it TO; that one stays put (or the same shape again for its own size)',
+  dimEditV:'Distance \u2014 type the value and press Enter; the FIRST shape you clicked moves \u00b7 prefix E for edge-to-edge',
+  dimEditS:'Size \u2014 type the value and press Enter; the shape resizes',
   node1:  'Edit nodes \u2014 drag a point to move it \u00b7 click a point to type exact X,Y \u00b7 click a segment to type its length \u00b7 Esc when done',
   nodeXY: 'Point \u2014 type exact "x,y"',
   nodeLen:'Segment \u2014 type its length (the later point moves along the segment direction)',
@@ -1306,6 +1317,8 @@ function curvesBtnClick(){
 var TOOL_HOTKEYS = {v:'select', l:'line', r:'rect', c:'circle', p:'poly', a:'arc', g:'guide',
                     f:'fillet', t:'trim', e:'extend', d:'copy', m:'mirror', o:'rotate',
                     s:'offset', n:'node', y:'array', i:'dim', k:'text', q:'measure'};
+TOOL_HOTKEYS.d = 'dim';        // D opens dimensioning, as in Fusion
+TOOL_HOTKEYS.u = 'copy';       // copy moves off D
 // Is a typed letter a TOOL HOTKEY, or DATA for the active tool? Letters are data while an operation
 // is in progress (D5 diameter, R2.5 radius, E5 edge distance) and when the idle tool itself takes
 // letters (mirror's H / V / HH / VV). Otherwise a hotkey letter switches tools on the first press.
@@ -1488,20 +1501,21 @@ function toolClick(w, snap){
     var hitD = pickEntity(w);
     if (hitD === null){ DRAW = null; DIMSEL = null; stagePrompt('dim0'); draw(); return; }
     if (!DRAW || DRAW.stage !== 'dimPick2'){
-      DRAW = {stage:'dimPick2', first:hitD};
+      DRAW = {stage:'dimPick2', first:hitD, firstAt:{x:w.x, y:w.y}};
       stagePrompt('dim1');
     } else {
       var e1 = DOC.ents[DRAW.first], e2 = DOC.ents[hitD];
       if (DRAW.first === hitD){
         // same shape twice: dimension the shape itself
         var kind = e1.t === 'circle' ? 'dia' : (e1.t === 'arc' ? 'rad' : (e1.t === 'line' ? 'len' : null));
-        if (kind){ addDim({kind:kind, a:entId(e1)}); toast('ok','Dimension added','It updates itself when the shape changes. Click the value to edit it.'); }
-        else toast('info','No size dimension for that shape','Try two shapes for a distance, or use a line, circle or arc.');
+        if (kind){ dimJustAdded(addDim({kind:kind, a:entId(e1)})); return; }
+        toast('info','No size dimension for that shape','Try two shapes for a distance, or use a line, circle or arc.');
       } else {
-        var rr = relInfo(e1, e2);
+        var rr = relInfo(e1, e2, DRAW.firstAt, {x:w.x, y:w.y});
         if (rr.kind === 'dist'){
-          addDim({kind:'pair', a:entId(e1), b:entId(e2), edge:false});
-          toast('ok','Dimension added','Distance between the two shapes. Click the value to change it \u2014 the second shape moves.');
+          dimJustAdded(addDim({kind:'pair', a:entId(e2), b:entId(e1), edge:false,
+                               aAt:{x:w.x, y:w.y}, bAt:DRAW.firstAt}));   // b moves; a is the reference
+          return;
         } else if (rr.kind === 'angle'){
           toast('warn','Not parallel','A distance needs parallel lines (they are ' + rr.cur.toFixed(1) + '\u00b0 apart).');
         } else {
@@ -5481,19 +5495,21 @@ function nearestEdgeOf(e, hint){
   } else consider(entityEdges(e));
   return best ? segNorm(best.ed[0], best.ed[1], best.ed[2], best.ed[3]) : null;
 }
-function refGeom(e, other){
+// `hint` is where the user clicked on this shape: a shape with many edges is measured from the
+// edge under the click, not from whichever edge happens to be closest to the other shape.
+function refGeom(e, other, hint){
   if (e.t === 'circle') return {pt:{x:e.cx, y:e.cy}};
   if (e.t === 'arc')    return {pt:{x:e.cx, y:e.cy}};
   if (e.t === 'line')   return {ln:lineNorm(e)};
   if (e.t === 'rect' || e.t === 'poly' || e.t === 'path' || e.t === 'group'){
-    var ln = nearestEdgeOf(e, repPoint(other));
+    var ln = nearestEdgeOf(e, hint || repPoint(other));
     return ln ? {ln:ln} : null;
   }
   return null;
 }
 function sd(n, px, py){ return n.a*px + n.b*py - n.c; }
-function relInfo(e1, e2){
-  var g1 = refGeom(e1, e2), g2 = refGeom(e2, e1);
+function relInfo(e1, e2, h1, h2){
+  var g1 = refGeom(e1, e2, h1), g2 = refGeom(e2, e1, h2);
   if (!g1 || !g2) return {kind:'unsupported'};
   if (g1.pt && g2.pt){
     var L = Math.hypot(g2.pt.x-g1.pt.x, g2.pt.y-g1.pt.y);
@@ -5524,14 +5540,14 @@ function relDims(e1, e2){
     return 'centre ' + r.cur.toFixed(2) + '  \u00b7 edge ' + Math.max(0, r.cur - rad).toFixed(2);
   return 'dist ' + r.cur.toFixed(2);
 }
-function relApply(e1, e2, v, toEdge){
-  var r = relInfo(e1, e2);
+function relApply(e1, e2, v, toEdge, h1, h2){
+  var r = relInfo(e1, e2, h1, h2);
   if (r.kind !== 'dist' || v <= 0) return false;
   if (toEdge){
     var rad = relRadius(e1, e2);
     if (rad > 0) v = v + rad;     // edge distance -> centre distance
   }
-  var g1 = refGeom(e1, e2), g2 = refGeom(e2, e1);
+  var g1 = refGeom(e1, e2, h1), g2 = refGeom(e2, e1, h2);   // same edges that were measured
   var dx = 0, dy = 0;
   if (r.mode === 'pp'){
     var vx = g2.pt.x-g1.pt.x, vy = g2.pt.y-g1.pt.y;
@@ -5667,13 +5683,13 @@ var PANEL_BTNS = {
  flipVBtn:{id:'flipVBtn', icon:'flipV', title:'Flip vertical (Shift+V) \u2014 mirror the selection top to bottom, in place'},
  curvesBtn:{id:'curvesBtn', icon:'curves', title:'Convert to curves \u2014 turn selected text into ordinary shapes you can trim, offset and cut'},
  offsetT:{tool:'offset', icon:'offs', title:'Offset (S) \u2014 select or click shapes, then type the distance: + outward, \u2212 inward (open shapes: + is left of travel)'},
- dimT:{tool:'dim', icon:'dim', title:'Dimension (I) \u2014 click one shape for its size, or two shapes for the distance between them. Dimensions stay on the drawing and update themselves; click a value to change it and move the geometry.'},
+ dimT:{tool:'dim', icon:'dim', title:'Dimension (D) \u2014 click a shape, then another, and type the distance: the second shape moves. Click one shape twice for its own size. Dimensions stay on the drawing and keep themselves up to date.'},
  nodeT:{tool:'node', icon:'node', title:'Edit nodes (N) \u2014 click a polyline to show its points; drag a point to move it, click a point or segment to type exact values'},
  groupBtn:{id:'groupBtn', icon:'group', title:'Group (G) \u2014 bundle the selected vectors into one object. All geometry is kept; it just selects and moves as one piece.'},
  ungroupBtn:{id:'ungroupBtn', icon:'ungroup', title:'Ungroup (U) \u2014 break a group back into its separate vectors'},
  joinBtn:{id:'joinBtn', icon:'join', title:'Join \u2014 stitch selected OPEN vectors whose ends meet into one continuous contour'},
  explodeBtn:{id:'explodeBtn', icon:'expl', title:'Explode \u2014 break a contour into its individual lines and arcs'},
- copyT: {tool:'copy', icon:'copy', title:'Copy (D) \u2014 select first (V), then click base point and destination, or type @dx,dy'},
+ copyT: {tool:'copy', icon:'copy', title:'Copy (U) \u2014 select first (V), then click base point and destination, or type @dx,dy'},
  mirrorT:{tool:'mirror', icon:'mirror', title:'Mirror (M) \u2014 select first; type H or V for a mirrored copy across the selection center, HH/VV to flip in place, or click 2 points for a custom axis'},
  rotateT:{tool:'rotate', icon:'rotate', title:'Rotate (O) \u2014 select first; click the rotation center, then type the angle in degrees (+ CCW)'},
  arrayT:{tool:'array', icon:'array', title:'Array (Y) \u2014 select first; type N@dx,dy for a linear array, or click a center then type N<step\u00b0 for a circular one'},
@@ -6456,7 +6472,7 @@ function wire(){
         showPrompt('No dimension for this pair yet. Esc to close.', '', false);
         return;
       }
-      DRAW = {stage:'dimEdit2', a:SEL[0], b:SEL[1]};
+      DRAW = {stage:'dimEdit2', a:SEL[1], b:SEL[0]};      // the shape picked LAST stays put
       var _pr = relInfo(DOC.ents[SEL[0]], DOC.ents[SEL[1]]);
       var _rad = relRadius(DOC.ents[SEL[0]], DOC.ents[SEL[1]]);
       showPrompt(_rad > 0
