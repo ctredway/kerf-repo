@@ -128,6 +128,14 @@
   #toolPanel button.tool{width:100%;height:36px}
 
   #canvasWrap{grid-row:2;grid-column:2;position:relative;min-width:0;min-height:0}
+  #dlgModal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:230}
+  #dlgModal[hidden]{display:none}
+  #dlgPanel{background:var(--panel);border:1px solid var(--line);border-radius:8px;width:min(480px,94vw);box-shadow:0 14px 48px rgba(0,0,0,.55)}
+  .dlgHead{display:flex;align-items:center;gap:10px;padding:13px 16px 10px;border-bottom:1px solid var(--line)}
+  .dlgHead b{flex:1;font-size:15px}
+  #dlgBody{padding:12px 16px;font-size:13px;line-height:1.55;white-space:pre-wrap;color:var(--ink)}
+  .dlgBtns{display:flex;gap:8px;justify-content:flex-end;padding:11px 16px;border-top:1px solid var(--line)}
+  .dlgBtns button.danger{background:#5a2320;border-color:#7a3028;color:#ffd9d3}
   #toolModal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:215}
   #toolModal[hidden]{display:none}
   #toolPanel2{background:var(--panel);border:1px solid var(--line);border-radius:8px;width:min(620px,94vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 14px 48px rgba(0,0,0,.55)}
@@ -346,6 +354,14 @@
 
   <div id="toolPanel"></div>
 
+  <div id="dlgModal" hidden>
+    <div id="dlgPanel" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+      <div class="dlgHead"><b id="dlgTitle">Confirm</b><button class="modalX" id="dlgX" title="Close (Esc)" aria-label="Close">✕</button></div>
+      <div id="dlgBody"></div>
+      <div class="dlgBtns"><button id="dlgCancel">Cancel</button><button id="dlgOk" class="primary">OK</button></div>
+    </div>
+  </div>
+
   <div id="toolModal" hidden>
     <div id="toolPanel2" role="dialog" aria-labelledby="tdTitle">
       <div class="tdHead"><div style="flex:1"><h3 id="tdTitle">Tool</h3><div id="tdSub"></div></div><button id="tdClose" title="Close (Esc)">✕</button></div>
@@ -459,7 +475,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.55.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.56.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -2676,14 +2692,24 @@ function libImportFile(f){
     if (head !== 'SQLite format 3'){ done(); toast('err', 'That isn\u2019t a VCarve tool library', 'Pick the tools.vtdb file from VCarve\u2019s ToolDatabase folder.'); return; }
     libLoadSql().then(function(SQL){
       var lib = libFromVtdb(new SQL.Database(bytes), f.name);
-      if (TOOLLIB && TOOLLIB.tools.length &&
-          !confirm('Replace your current tool library (' + TOOLLIB.tools.length + ' tools from ' + TOOLLIB.source.file + ') with ' + lib.tools.length + ' tools from ' + f.name + '?')){ done(); return; }
-      return libSave(lib).then(function(){
-        TOOLLIB = lib; LIBUI.sel = null; LIBUI.q = ''; document.getElementById('libSearch').value = '';
-        done(); libRender(); renderToolpathPanel();
-        toast('ok', 'Tool library imported', lib.tools.length + ' tools, ' + lib.machines.length + (lib.machines.length === 1 ? ' machine' : ' machines') + ' and ' +
-              lib.materials.length + (lib.materials.length === 1 ? ' material' : ' materials') + ' from ' + f.name + '.');
-      });
+      var saveIt = function(){
+        return libSave(lib).then(function(){
+          TOOLLIB = lib; LIBUI.sel = null; LIBUI.q = ''; document.getElementById('libSearch').value = '';
+          done(); libRender(); renderToolpathPanel();
+          toast('ok', 'Tool library imported', lib.tools.length + ' tools, ' + lib.machines.length + (lib.machines.length === 1 ? ' machine' : ' machines') + ' and ' +
+                lib.materials.length + (lib.materials.length === 1 ? ' material' : ' materials') + ' from ' + f.name + '.');
+        });
+      };
+      if (TOOLLIB && TOOLLIB.tools.length){
+        return uiDialog({title:'Replace your tool library?',
+                         body:'You have ' + TOOLLIB.tools.length + ' tools from ' + TOOLLIB.source.file + '. Importing ' + f.name +
+                              ' with ' + lib.tools.length + ' tools replaces them in this browser. Your VCarve files are not touched.',
+                         ok:'Replace', danger:true}).then(function(go){
+          if (!go){ done(); return; }
+          return saveIt();
+        });
+      }
+      return saveIt();
     }).catch(function(err){
       done();
       toast('err', 'Couldn\u2019t import that library', (err && err.message ? err.message.charAt(0).toUpperCase() + err.message.slice(1) : 'Unknown error') +
@@ -2696,6 +2722,28 @@ function libImportFile(f){
 // ---- Tool details: one bit, as the project uses it and as the library knows it ----
 // ctx = {ptool:{num,name,rpm}, machineId, materialId, usedBy:[{name,type}]}. Built to be reused
 // by CAM, where a toolpath's tool can be changed.
+// In-app dialogs, so nothing has to fall back to the browser's own boxes.
+var DLG_RESOLVE = null;
+function uiDialog(o){
+  return new Promise(function(res){
+    if (DLG_RESOLVE) DLG_RESOLVE(false);
+    DLG_RESOLVE = res;
+    document.getElementById('dlgTitle').textContent = o.title || 'Confirm';
+    document.getElementById('dlgBody').textContent = o.body || '';
+    var ok = document.getElementById('dlgOk'), cancel = document.getElementById('dlgCancel');
+    ok.textContent = o.ok || 'OK';
+    ok.classList.toggle('danger', !!o.danger);
+    ok.classList.toggle('primary', !o.danger);
+    cancel.style.display = o.note ? 'none' : '';
+    document.getElementById('dlgModal').hidden = false;
+    ok.focus();
+  });
+}
+function dlgEnd(v){
+  document.getElementById('dlgModal').hidden = true;
+  var r = DLG_RESOLVE; DLG_RESOLVE = null;
+  if (r) r(v);
+}
 var TD = null;
 function openToolDetails(ctx){
   TD = ctx;
@@ -6409,6 +6457,15 @@ function wire(){
   document.getElementById('floatDel').addEventListener('click', function(){
     if (DRAW && DRAW.stage === 'dimValue') deleteDim(DRAW.di);
   });
+  document.getElementById('dlgOk').addEventListener('click', function(){ dlgEnd(true); });
+  document.getElementById('dlgCancel').addEventListener('click', function(){ dlgEnd(false); });
+  document.getElementById('dlgX').addEventListener('click', function(){ dlgEnd(false); });
+  document.getElementById('dlgModal').addEventListener('pointerdown', function(e){ if (e.target.id === 'dlgModal') dlgEnd(false); });
+  document.getElementById('dlgPanel').addEventListener('keydown', function(e){
+    if (e.key === 'Escape'){ e.preventDefault(); dlgEnd(false); }
+    else if (e.key === 'Enter'){ e.preventDefault(); dlgEnd(true); }
+    e.stopPropagation();
+  });
   document.getElementById('tdClose').addEventListener('click', closeToolDetails);
   document.getElementById('tdDone').addEventListener('click', closeToolDetails);
   document.getElementById('tdLib').addEventListener('click', function(){
@@ -6427,8 +6484,13 @@ function wire(){
     if (f) libImportFile(f);
   });
   document.getElementById('libRemove').addEventListener('click', function(){
-    if (!TOOLLIB || !confirm('Remove the tool library (' + TOOLLIB.tools.length + ' tools) from this browser? Your VCarve file is not affected.')) return;
-    libClear().then(function(){ TOOLLIB = null; LIBUI.sel = null; libRender(); renderToolpathPanel(); toast('info', 'Tool library removed', 'Import it again any time.'); });
+    if (!TOOLLIB) return;
+    uiDialog({title:'Remove the tool library?',
+              body:'All ' + TOOLLIB.tools.length + ' tools go from this browser. Your VCarve tools.vtdb file is not affected, so you can import it again any time.',
+              ok:'Remove', danger:true}).then(function(go){
+      if (!go) return;
+      libClear().then(function(){ TOOLLIB = null; LIBUI.sel = null; libRender(); renderToolpathPanel(); toast('info', 'Tool library removed', 'Import it again any time.'); });
+    });
   });
   document.getElementById('libMachine').addEventListener('change', function(e){
     UICFG.libMachine = e.target.value; uiCfgSave(); libRenderTree(e.target.value); libRenderDetail(e.target.value); renderToolpathPanel();
@@ -6611,7 +6673,7 @@ function wire(){
         // VCarve .crv
         try{
           var ex = crvExtract(buf);
-          if (!ex || (!ex.contours.length && !ex.preview.length)){ alert('No vectors found in this .crv (or unsupported version).'); return; }
+          if (!ex || (!ex.contours.length && !ex.preview.length)){ toast('err', 'Nothing to import', 'No vectors found in this .crv, or it\u2019s a version 454 can\u2019t read yet.'); return; }
           IMP.mode = 'crv'; IMP.ex = ex;
           document.getElementById('impTitle').textContent = 'Import VCarve file';
           document.querySelectorAll('.impCrvRow').forEach(function(el){ el.hidden = false; });
@@ -6628,14 +6690,14 @@ function wire(){
           document.getElementById('impIN').checked = inchGuess;
           document.getElementById('impMM').checked = !inchGuess;
           document.getElementById('impModal').hidden = false;
-        }catch(err){ alert('.crv import failed: ' + err.message); }
+        }catch(err){ toast('err', 'Couldn\u2019t read that .crv', err.message); }
         return;
       }
       var txt2 = new TextDecoder().decode(buf);
       if (/^\s*0\s*[\r\n]+\s*SECTION/m.test(txt2) || txt2.indexOf('ENTITIES') >= 0 && txt2.indexOf('$INSUNITS') >= 0 || /\n\s*0\s*\r?\nSECTION/.test(txt2)){
         try{
           var dx = dxfExtract(txt2);
-          if (!dx.ents.length){ alert('No importable vectors found in this DXF.'); return; }
+          if (!dx.ents.length){ toast('err', 'Nothing to import', 'No vectors in this DXF that 454 can use.'); return; }
           IMP.mode = 'dxf'; IMP.dxf = dx;
           var bbx = dxfBBox(dx.ents);
           var skTxt = Object.keys(dx.skipped).length
@@ -6652,14 +6714,14 @@ function wire(){
           document.getElementById('impIN').checked = dx.units === 1;
           document.getElementById('impMM').checked = dx.units !== 1;
           document.getElementById('impModal').hidden = false;
-        }catch(errD){ alert('DXF import failed: ' + errD.message); }
+        }catch(errD){ toast('err', 'Couldn\u2019t read that DXF', errD.message); }
         return;
       }
       try{
         var d = JSON.parse(txt2);
         if (d && d.stock && d.ents){ pushUndo(); DOC = d; syncStockUI(); persist(); fit(); }
-        else alert('Not a 454 Design file.');
-      }catch(err2){ alert('Not a 454 Design, .crv, or .dxf file.'); }
+        else toast('err', 'Not a 454 Design file', 'This looks like JSON, but not a drawing 454 Design saved.');
+      }catch(err2){ toast('err', 'Unknown file type', 'Open a 454 Design drawing, a VCarve .crv, or a .dxf.'); }
     };
     rd.readAsArrayBuffer(f);
   }
@@ -6868,6 +6930,7 @@ function wire(){
     if (!document.getElementById('nestModal').hidden) return;   // so does the nesting dialog
     if (!document.getElementById('libModal').hidden) return;    // and the tool library
     if (!document.getElementById('toolModal').hidden) return;   // and tool details
+    if (!document.getElementById('dlgModal').hidden) return;    // and an in-app dialog
     if (e.key === 'Escape' && !document.getElementById('msgPanel').hidden){ setMsgPanel(false); return; }
     var inField = e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA';
     // Ctrl-combos are global: they work from anywhere, including while an input has focus,
