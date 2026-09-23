@@ -358,7 +358,7 @@
           <button id="choosePort" class="linkBtn" hidden title="Pick a different USB port">Choose port&hellip;</button>
           <span class="chip" id="connChip">not connected</span>
         </div>
-        <p id="serialNote">Talks GRBL 1.1 over USB at 115200 baud (Shapeoko / Nomad controller). Needs Chrome or Edge on desktop — Web Serial. This moves a real machine: keep a hand near the e-stop, and air-cut new files first.</p>
+        <p id="serialNote">This moves a real machine: keep a hand near the e-stop, and air-cut new files first.</p>
 
         <div id="alarmBanner" style="display:none;background:#4d2620;border:1px solid var(--err);border-radius:5px;padding:10px;margin-bottom:12px;font-size:12.5px;line-height:1.5">
           <b id="alarmBannerTxt">Machine is locked</b><br>
@@ -368,7 +368,7 @@
 
         <div id="mControls" class="disabledArea">
           <div class="mSection">
-            <h3>Machine</h3>
+            <h3>Machine <button class="hlp" data-h="serial" title="What is this?" aria-label="Help">ⓘ</button></h3>
             <div class="mRow">
               <button id="homeBtn">Home ($H)</button>
               <button id="unlockBtn">Unlock ($X)</button>
@@ -378,14 +378,14 @@
           </div>
 
           <div class="mSection">
-            <h3>Controller config</h3>
+            <h3>Controller config <button class="hlp" data-h="controllercfg" title="What is this?" aria-label="Help">ⓘ</button></h3>
             <div class="mRow"><button id="refreshCfg">Re-read ($$, $#)</button><span class="chip" id="cfgChip">read on connect</span></div>
             <div class="mRow"><button id="cfgCheck">Check controller settings</button></div>
             <div id="cfgTable" style="display:none;font-family:var(--mono);font-size:11.5px;line-height:18px;background:var(--panel-deep);border:1px solid var(--line);border-radius:4px;padding:6px 8px;max-height:190px;overflow-y:auto"></div>
           </div>
 
           <div class="mSection">
-            <h3>Jog &amp; zero</h3>
+            <h3>Jog &amp; zero <button class="hlp" data-h="jogpanel" title="What is this?" aria-label="Help">ⓘ</button></h3>
             <div class="mRow">
               <button id="jogOpen" class="primary">Open jog panel</button>
               <span style="color:var(--faint);font-size:12px">arrow keys &amp; PgUp/PgDn work while it's open</span>
@@ -393,35 +393,33 @@
           </div>
 
           <div class="mSection">
-            <h3>Probe</h3>
+            <h3>Probe <button class="hlp" data-h="probepanel" title="What is this?" aria-label="Help">ⓘ</button></h3>
             <div class="mRow">
               <button id="bzOpen">BitZero Z zero…</button>
             </div>
           </div>
 
           <div class="mSection">
-            <h3>Spindle</h3>
+            <h3>Spindle <button class="hlp" data-h="spindlepanel" title="What is this?" aria-label="Help">ⓘ</button></h3>
             <div class="mRow">
               <input type="number" id="rpmIn" value="10000" step="1000" style="width:84px"> <span style="color:var(--faint)">rpm</span>
               <button id="spinOn">Start (M3)</button>
               <button id="spinOff" class="danger">Stop (M5)</button>
               <span class="chip" id="spinState">stopped</span>
             </div>
-            <p class="note">Shows the commanded S value from the controller — with a VFD this is the target, not a tachometer reading. Manual starts don't wait: give it a few seconds before cutting. Streamed jobs get the spin-up dwell automatically.</p>
           </div>
 
           <div class="mSection">
-            <h3 class="qaHead">Quick actions <button id="qaAdd" class="qaAddBtn" title="Add a quick action">+ Add</button></h3>
+            <h3 class="qaHead">Quick actions <button class="hlp" data-h="quick" title="What is this?" aria-label="Help">ⓘ</button> <button id="qaAdd" class="qaAddBtn" title="Add a quick action">+ Add</button></h3>
             <div id="qaList"></div>
             <div class="mRow" id="qaRunRow" style="display:none">
               <span id="qaStatus" style="color:var(--amber);font-size:12.5px;flex:1"></span>
               <button id="qaCancel" class="danger" title="Stop sending the rest of the action. The current move finishes; use STOP for an immediate halt.">Cancel</button>
             </div>
-            <p class="note">Saved G-code for things you do often. Each line is sent only after the controller confirms the one before. Use the pencil to edit.</p>
           </div>
 
           <div class="mSection">
-            <h3>Run job</h3>
+            <h3>Run job <button class="hlp" data-h="runjob" title="What is this?" aria-label="Help">ⓘ</button></h3>
             <div id="toolBanner"><b id="toolBannerTxt">Tool change</b><br>Waiting for the tool change — the prompt is on screen.</div>
             <div class="mRow">
               <button id="jobRun" class="primary">Run loaded file</button>
@@ -437,7 +435,7 @@
           </div>
 
           <div class="mSection" style="margin-bottom:4px">
-            <h3>Console</h3>
+            <h3>Console <button class="hlp" data-h="console" title="What is this?" aria-label="Help">ⓘ</button></h3>
             <div id="consoleLog"></div>
             <input id="consoleIn" placeholder="type a command — Enter to send ($$, G0 X10, ?, !, ~)" autocomplete="off">
             <div class="mRow" style="margin-top:6px"><input type="checkbox" id="verboseChk"><label for="verboseChk">Show status reports and job acks</label></div>
@@ -573,12 +571,10 @@
         </select>
       </div>
       <div class="mRow"><input type="checkbox" id="checkEnvelope"><label for="checkEnvelope">Flag moves outside work area</label></div>
-      <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">Auto-synced from the controller's $130/$131 on connect. The outside-work-area check assumes the job zero sits where selected above.</p>
       <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Stock <button class="hlp" data-h="stock" title="What is this?" aria-label="Help">ⓘ</button></h3>
       <div class="mRow">
         <label>Thickness</label><input type="number" id="stockThk" value="0" step="0.5"> <span style="color:var(--faint)">mm</span>
       </div>
-      <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">If Z0 is the top of your stock, cuts deeper than this get flagged (i.e. into your wasteboard). 0 disables.</p>
       <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Time estimate <button class="hlp" data-h="rapid" title="What is this?" aria-label="Help">ⓘ</button></h3>
       <div class="mRow">
         <label>Rapid rate</label><input type="number" id="rapidRate" value="5000" step="100"> <span style="color:var(--faint)">mm/min — auto-set from the controller</span>
@@ -601,7 +597,6 @@
         <select id="spinType"><option value="router">Trim router</option><option value="vfd">VFD spindle</option></select>
         <label>spin-up</label><input type="number" id="spinupSec" value="10" step="0.5" min="0" style="width:64px"><span style="color:var(--faint)">s dwell after M3</span>
       </div>
-      <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">BitSetter probing runs automatically on jobs with tool changes when enabled with a captured position. BitZero Z zeroing lives in Machine → Probe; corner probing is the next build.</p>
     </div>
 
     <div class="smPane" id="smJob">
@@ -636,7 +631,6 @@
         <label>Y</label><input type="number" id="pkY" step="0.1" style="width:84px" placeholder="XY zero">
         <button id="pkCapture" title="Jog to where the machine should sit at the end of a job, then store it">Capture</button>
       </div>
-      <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">At each M6 the machine parks here (at traverse height) before asking for the tool — pick somewhere forward with wrench room, e.g. left of the BitSetter. Needs homing.</p>
     </div>
 
     <div class="smPane" id="smProfile">
@@ -764,7 +758,7 @@
    Produces: segments (tessellated micro-moves), issues, tools
    All internal units are mm. seg.units records display units.
    ============================================================ */
-var CONTROL_VERSION = '0.19.0';
+var CONTROL_VERSION = '0.19.1';
 
 var SUPPORTED_G = {0:1,1:1,2:1,3:1,4:1,17:1,18:1,19:1,20:1,21:1,28:1,28.2:1,90:1,91:1,91.1:1,90.1:1,53:1};
 var IGNORED_G   = {40:'G40 cutter compensation off — accepted but ignored by Carbide Motion',
@@ -2975,11 +2969,19 @@ function dlgEnd(v){
   if (r) r(v);
 }
 var HELP_TEXT = {
+  'serial': {t:'Connecting to the machine', b:"454 Control talks to GRBL 1.1 over USB at 115200 baud, which covers the Shapeoko and Nomad controllers.\n\nIt needs Chrome or Edge on a desktop, because Web Serial isn't available in other browsers. Everything else in the app, including opening and checking G-code, works anywhere.\n\nAfter the first connection the button becomes Reconnect and skips the port picker; Choose port lets you pick a different device."},
+  'controllercfg': {t:'Controller config', b:"The controller's own $ settings, read back when you connect: travel limits, homing, speeds, spindle maximum.\n\n454 Control only reads them. They're changed in the controller itself, and Carbide Motion's setup wizard writes them for Shapeoko machines.\n\nCheck controller settings compares the ones this app depends on against what it needs, and reports anything that looks wrong."},
+  'jogpanel': {t:'Jog & zero', b:"Moving the machine by hand, and setting your work zero.\n\nArrow keys jog X and Y, Page Up and Page Down jog Z, while the jog window is open. Step mode moves a fixed distance per press; continuous mode moves while a key is held.\n\nZeroing sets where the job's 0,0,0 is on the material. It's stored in the controller, so it survives homing and a restart of this app."},
+  'probepanel': {t:'Probe', b:'Setting Z zero with the BitZero touch plate.\n\nMeasure the plate with calipers and enter that thickness, verify the circuit by touching the pin to the plate, then probe. The tool tip should start 2 to 10 mm above the plate.\n\nZ0 ends up at the top of your stock. Always paper-test the result before cutting.'},
+  'spindlepanel': {t:'Spindle', b:"The speed shown is the value commanded to the controller. With a VFD that's the target, not a reading from a tachometer.\n\nStarting the spindle by hand from here doesn't wait for it to reach speed: give it a few seconds before cutting anything.\n\nJobs are different: 454 Control inserts a spin-up dwell after every M3 automatically, using the time set in Settings."},
+  'quick': {t:'Quick actions', b:"Saved G-code for things you do often: raising Z, warming the spindle, moving somewhere to change a bit.\n\nLines are sent one at a time, each waiting for the controller to confirm the one before, so an action can't overflow the controller's buffer. Any error, alarm or reset stops it at once.\n\nUse the pencil to edit an action; they're stored with your machine profile."},
+  'runjob': {t:'Run job', b:'Streams the loaded file to the machine, with everything Settings adds: spin-up dwells, start and stop high, tool-change handling and the ending.\n\nStart shows a summary of exactly what will happen before anything moves. Hold pauses, Resume continues, End job stops the job.\n\nRecover restarts a stopped job from a line: it rebuilds the modal state, moves to the spot carefully, and lets you bail out at any point.'},
+  'console': {t:'Console', b:"The raw conversation with the controller: everything 454 Control sends, and everything the controller says back.\n\nYou can type commands here for anything the app doesn't cover. Commands typed here are sent as-is, with no checks and no lift or spindle handling, so treat them as if you were typing at the controller directly."},
   'workarea': {t:'Work area', b:"The cutting area of your machine, used to draw the outline in the preview and to flag toolpaths that run outside it.\n\nThis is 454 Control's own idea of your machine, not the controller's. The controller has its own travel limits in $130/$131/$132, and the controller check compares the two."},
   'jobzero': {t:'Job zero', b:"Where the drawing's 0,0 sits on the stock: the front-left corner, or the middle.\n\nThis only affects the preview and the outside-work-area check. It does not move your machine's work zero, which you set with the BitZero or by zeroing the axes."},
-  'stock': {t:'Stock thickness', b:'The thickness of the material, used to flag cuts that go deeper than the stock.\n\nLeave it at 0 to turn the check off. Set it when Z0 is the top of your material and you want warning of cuts that reach your wasteboard.'},
+  'stock': {t:'Stock thickness', b:'Cuts deeper than the thickness get flagged, which usually means into the wasteboard.\n\nThe controller\u2019s own $130/$131 are read on connect and fill this in.\n\nThe thickness of the material, used to flag cuts that go deeper than the stock.\n\nLeave it at 0 to turn the check off. Set it when Z0 is the top of your material and you want warning of cuts that reach your wasteboard.'},
   'rapid': {t:'Rapid rate (time estimate only)', b:"The speed 454 Control assumes for G0 moves when estimating how long a job takes. It changes the estimate only; the machine's real rapid speed comes from $110/$111/$112 in the controller.\n\nReal jobs run a little longer than the estimate because acceleration isn't modelled."},
-  'bitsetter': {t:'BitSetter', b:'The fixed button the tool touches so the machine can measure tool length.\n\nJog the tool over the button and press Capture position; the machine coordinates are stored. During a job with tool changes, each new tool is measured here and the length difference is applied automatically, so you only zero Z once.\n\nIt needs a homed machine, because the position is in machine coordinates.'},
+  'bitsetter': {t:'BitSetter', b:'Probing runs automatically on jobs with tool changes when this is enabled.\n\nThe fixed button the tool touches so the machine can measure tool length.\n\nJog the tool over the button and press Capture position; the machine coordinates are stored. During a job with tool changes, each new tool is measured here and the length difference is applied automatically, so you only zero Z once.\n\nIt needs a homed machine, because the position is in machine coordinates.'},
   'bitzero': {t:'BitZero', b:"The touch plate used to set your work zero. 454 Control uses it for Z.\n\nSet the plate thickness by measuring it with calipers; the probe sets Z0 at the top of the stock, which is the plate's trigger height minus the thickness. Verify the circuit (touch the pin to the plate) before probing, and paper-test the zero before cutting."},
   'spindle': {t:'Spindle type and spin-up', b:"Trim router or VFD spindle, and how long to wait after M3 before any cutting move.\n\nMost CAM files don't include that wait, so 454 Control inserts a dwell after each spindle start. Carbide Motion does the same thing, at about 2.5 s, which suits a router. A VFD spindle takes longer to reach speed: 10 s is the default here.\n\nToo short means the bit enters the material before it is up to speed."},
   'highstart': {t:'Start & stop high', b:'Keeps the tool high whenever it is travelling rather than cutting.\n\nAt the start and after every tool change, the machine traverses to the next XY at the top of travel before plunging. Before every spindle stop, and at the end of the job, it lifts clear first.\n\nThis is what stops a bit dragging across clamps and stock. A lift is skipped when the tool is already higher than traverse height, so it never moves down.'},
