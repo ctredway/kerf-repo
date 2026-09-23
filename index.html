@@ -11,8 +11,17 @@
     --bg:#14181d; --panel:#1d232b; --panel-deep:#171c22; --line:#2a323c;
     --ink:#dce3ea; --muted:#8794a1; --faint:#5a6673;
     --cut:#b87f2e; --cut-done:#ffc96b; --rapid:#46586b; --rapid-done:#7fa3c4;
-    --amber:#e8a33d; --err:#e06c5a; --warn:#d98e3f; --info:#6fa8dc; --ok:#7fb069;
+    --amber:#e8a33d;                      /* the accent: set from the theme settings */
+    --accent-soft:rgba(232,163,61,.14); --accent-faint:rgba(232,163,61,.07);
+    --on-accent:#1a1407;                  /* text on an accent-filled button */
+    --err:#e06c5a; --warn:#d98e3f; --info:#6fa8dc; --ok:#7fb069;
     --mono:'JetBrains Mono',monospace; --sans:'Archivo',sans-serif;
+  }
+  :root[data-theme="light"]{
+    --bg:#eef1f4; --panel:#ffffff; --panel-deep:#f4f6f8; --line:#d3d9e0;
+    --ink:#1c2228; --muted:#5d6b78; --faint:#8b98a5;
+    --cut:#a8721f; --cut-done:#8a5a10; --rapid:#9bb0c4; --rapid-done:#4d7ba6;
+    --err:#b3382a; --warn:#9a6413; --info:#1d6fb8; --ok:#3f7a2e;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
@@ -20,7 +29,7 @@
   button{font-family:var(--sans);cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:4px;padding:6px 12px;font-size:13px}
   button:hover{border-color:var(--faint)}
   button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--amber);outline-offset:1px}
-  button.primary{background:var(--amber);border-color:var(--amber);color:#1a1407;font-weight:600}
+  button.primary{background:var(--amber);border-color:var(--amber);color:var(--on-accent);font-weight:600}
   button.primary:hover{background:#f2b04a}
   input,select{background:var(--panel-deep);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:5px 8px;font-size:13px;font-family:var(--sans)}
   input[type=number]{width:70px;font-family:var(--mono)}
@@ -31,7 +40,7 @@
   header .brand{font-weight:700;font-size:17px;letter-spacing:.2px}
   header .brand span{color:var(--amber)}
   #openDesign{color:var(--amber);text-decoration:none;font-size:13px;font-weight:600;padding:5px 10px;border:1px solid var(--line);border-radius:5px;white-space:nowrap}
-  #openDesign:hover{border-color:var(--amber);background:rgba(232,163,61,0.08)}
+  #openDesign:hover{border-color:var(--amber);background:var(--accent-faint)}
   header .sub{color:var(--muted);font-size:12.5px}
   header .spacer{flex:1}
   #fileName{font-family:var(--mono);font-size:12.5px;color:var(--muted);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -210,6 +219,14 @@
   #runBar.on{display:flex}
   #rbPos{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
   #rbPos b{color:var(--ink);font-weight:500}
+  #rbActionsWrap{position:relative;display:inline-flex}
+  #rbActionsWrap[hidden]{display:none}
+  #rbMenu{position:absolute;top:calc(100% + 6px);left:0;min-width:190px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:4px;z-index:30}
+  #rbMenu[hidden]{display:none}
+  #rbMenu button{display:block;width:100%;text-align:left;background:none;border:0;border-radius:4px;padding:6px 9px;color:var(--ink);font-size:12.5px;cursor:pointer}
+  #rbMenu button:hover{background:rgba(255,255,255,.06)}
+  #rbMenu button:disabled{color:var(--faint);cursor:default}
+  #rbMenu .rbMenuNote{padding:6px 9px;font-size:11.5px;color:var(--muted);line-height:1.4}
   #rbJobOnly{display:none;align-items:center;gap:8px}
   #runBar.job #rbJobOnly{display:flex}
   #runBar:not(.job) #ovRow{display:none}
@@ -279,6 +296,10 @@
       <span class="stateChip" id="rbState">offline</span>
       <span id="rbPos" title="Work position">X <b id="rbX">0.000</b> Y <b id="rbY">0.000</b> Z <b id="rbZ">0.000</b></span>
       <button id="rbJog" title="Open the jog and zero panel">Jog &amp; zero</button>
+      <span id="rbActionsWrap">
+        <button id="rbActions" aria-haspopup="true" aria-expanded="false" title="Run a quick action">Actions ▾</button>
+        <div id="rbMenu" hidden role="menu" aria-label="Quick actions"></div>
+      </span>
       <span id="rbJobOnly">
       <button id="rbHold" class="danger iconBtn" title="Feed hold — pause motion now"><svg viewBox="0 0 16 16"><line x1="6" y1="3.5" x2="6" y2="12.5"/><line x1="10" y1="3.5" x2="10" y2="12.5"/></svg></button>
       <button id="rbResume" class="iconBtn" title="Cycle start / resume"><svg viewBox="0 0 16 16"><path d="M5.5 3.5 L12 8 L5.5 12.5 Z"/></svg></button>
@@ -546,7 +567,7 @@
 
     <div class="smPane active" id="smMachine">
       <div class="mRow"><span class="chip" id="modelChip">model: connect to detect</span></div>
-      <h3 style="font-size:13px;font-weight:600;margin:6px 0 8px">Display</h3>
+      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Display</h3>
       <div class="mRow"><input type="checkbox" id="showRapids" checked><label for="showRapids">Show rapid moves</label></div>
       <div class="mRow"><input type="checkbox" id="showEnvelope"><label for="showEnvelope">Show work area outline</label></div>
       <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Work area <button class="hlp" data-h="workarea" title="What is this?" aria-label="Help">ⓘ</button></h3>
@@ -634,6 +655,22 @@
     </div>
 
     <div class="smPane" id="smProfile">
+      <h3 style="font-size:13px;font-weight:600;margin:6px 0 8px">Appearance</h3>
+      <div class="mRow">
+        <label for="uiTheme">Theme</label>
+        <select id="uiTheme"><option value="dark">Dark</option><option value="light">Light</option></select>
+        <label for="uiAccent" style="margin-left:10px">Accent</label>
+        <select id="uiAccent">
+          <option value="gold">Gold</option><option value="red">Red</option><option value="blue">Blue</option>
+          <option value="green">Green</option><option value="purple">Purple</option><option value="teal">Teal</option>
+          <option value="custom">Custom…</option>
+        </select>
+        <input type="color" id="uiAccentHex" value="#e8a33d" style="width:44px;height:26px;padding:1px;background:none;border:1px solid var(--line);border-radius:4px">
+      </div>
+
+      <p class="note" style="color:var(--faint);font-size:12px;line-height:1.5">Appearance belongs to this browser, not to a machine: it is shared with 454 Design and is not part of a profile export.</p>
+
+      <h3 style="font-size:13px;font-weight:600;margin:14px 0 8px">Machine profile</h3>
       <div class="mRow">
         <button id="profExport">Export profile</button>
         <button id="profImport">Import profile / shapeoko.json</button>
@@ -758,7 +795,7 @@
    Produces: segments (tessellated micro-moves), issues, tools
    All internal units are mm. seg.units records display units.
    ============================================================ */
-var CONTROL_VERSION = '0.19.1';
+var CONTROL_VERSION = '0.21.2';
 
 var SUPPORTED_G = {0:1,1:1,2:1,3:1,4:1,17:1,18:1,19:1,20:1,21:1,28:1,28.2:1,90:1,91:1,91.1:1,90.1:1,53:1};
 var IGNORED_G   = {40:'G40 cutter compensation off — accepted but ignored by Carbide Motion',
@@ -1168,7 +1205,7 @@ function w3(x,y,z){ return new THREE.Vector3(x, z, -y); } // CNC -> three
 function initThree(){
   viewportEl = document.getElementById('viewport');
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x14181d);
+  scene.background = new THREE.Color(cssNum('--bg', 0x14181d));
   camera = new THREE.PerspectiveCamera(45, 1, 0.1, 50000);
   renderer3 = new THREE.WebGLRenderer({antialias:true});
   renderer3.setPixelRatio(window.devicePixelRatio || 1);
@@ -1423,7 +1460,8 @@ function buildStage(){
   axis(w3(0,al,0), 0x5fae5f);
   axis(w3(0,0,al), 0x5f7fd8);
   var oGeom = new THREE.SphereGeometry(Math.max(1, Math.min(c.w, c.d) * 0.006), 12, 12);
-  axesObj.add(new THREE.Mesh(oGeom, new THREE.MeshBasicMaterial({color:0xe8a33d})));
+  originDot = new THREE.Mesh(oGeom, new THREE.MeshBasicMaterial({color: cssNum('--amber', 0xe8a33d)}));
+  axesObj.add(originDot);
   scene.add(axesObj);
 }
 
@@ -3052,6 +3090,67 @@ function connClose(){
   profileSave();
   document.getElementById('connModal').hidden = true;
 }
+// THEMES. One accent colour drives the whole app: it is --amber in the stylesheet, with two
+// translucent versions for highlights, and a matching text colour for filled buttons. The 3D
+// view can't use CSS variables, so it reads them back after a theme is applied.
+var ACCENTS = {gold:'#e8a33d', red:'#e0533d', blue:'#4d9be6', green:'#4cc46a', purple:'#b07fe0', teal:'#3fbfae'};
+function hexToRgb(h){
+  h = String(h || '').replace('#','');
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  var v = parseInt(h, 16);
+  if (!isFinite(v)) return {r:232, g:163, b:61};
+  return {r:(v>>16)&255, g:(v>>8)&255, b:v&255};
+}
+var UITHEME = {theme:'dark', accent:'gold', accentHex:ACCENTS.gold};
+function themeLoad(){
+  try{
+    var t = JSON.parse(localStorage.getItem('454-theme') || 'null');
+    if (t && typeof t === 'object') UITHEME = {theme:t.theme || 'dark', accent:t.accent || 'gold', accentHex:t.accentHex || ACCENTS.gold};
+  }catch(e){}
+  return UITHEME;
+}
+function themeSave(){ try{ localStorage.setItem('454-theme', JSON.stringify(UITHEME)); }catch(e){} }
+function accentColour(){
+  if (UITHEME.accent === 'custom') return UITHEME.accentHex || ACCENTS.gold;
+  return ACCENTS[UITHEME.accent] || ACCENTS.gold;
+}
+// The 3D view is WebGL, so it can't use CSS variables: it reads them back and restyles itself.
+function cssNum(name, fallback){
+  try{
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    if (!v) return fallback;
+    if (v.charAt(0) === '#') return parseInt(v.slice(1).length === 3 ? v.slice(1).replace(/(.)/g,'$1$1') : v.slice(1), 16);
+    var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(v);
+    if (m) return (+m[1] << 16) | (+m[2] << 8) | (+m[3]);
+  }catch(e){}
+  return fallback;
+}
+function themeScene(){
+  if (typeof scene === 'undefined' || !scene) return;
+  var light = UITHEME.theme === 'light';
+  if (scene.background && scene.background.setHex) scene.background.setHex(cssNum('--bg', light ? 0xeef1f4 : 0x14181d));
+  if (typeof gridObj !== 'undefined' && gridObj && gridObj.material && gridObj.material.color)
+    gridObj.material.color.setHex(light ? 0xc9d2da : 0x20262e);
+  if (typeof envObj !== 'undefined' && envObj && envObj.material && envObj.material.color)
+    envObj.material.color.setHex(light ? 0x8fa2b5 : 0x51617a);
+  if (typeof originDot !== 'undefined' && originDot && originDot.material && originDot.material.color)
+    originDot.material.color.setHex(cssNum('--amber', 0xe8a33d));
+}
+function applyTheme(save){
+  if (save !== false) themeSave();
+  var root = document.documentElement;
+  root.setAttribute('data-theme', UITHEME.theme === 'light' ? 'light' : 'dark');
+  var hex = accentColour(), c = hexToRgb(hex);
+  root.style.setProperty('--amber', hex);
+  root.style.setProperty('--accent-soft', 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',.16)');
+  root.style.setProperty('--accent-faint', 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',.08)');
+  // dark text on a light accent, light text on a dark one
+  var lum = (0.299*c.r + 0.587*c.g + 0.114*c.b) / 255;
+  root.style.setProperty('--on-accent', lum > 0.6 ? '#14181d' : '#fff');
+  if (typeof themeScene === 'function') themeScene();
+  if (typeof draw === 'function') try{ draw(); }catch(e){}
+}
+var originDot = null;
 var HOME_ASKED = false;
 function homeMaybeAsk(){
   if (HOME_ASKED || !SERIAL.connected || SERIAL.homedSeen) return;
@@ -3124,7 +3223,41 @@ function qaFinish(ok, why){
   else logC('err', 'quick action "' + n + '" stopped: ' + why + '. Nothing further was sent.');
   qaRender();
 }
+function rbMenuRender(){
+  var wrap = document.getElementById('rbActionsWrap'), menu = document.getElementById('rbMenu');
+  if (!wrap || !menu) return;
+  var acts = PROFILE.quick || [];
+  wrap.hidden = !acts.length;
+  menu.innerHTML = '';
+  var busy = QA.active || JOB.active || PROBE.active || JOGC.active || (SERIAL.state && SERIAL.state !== 'Idle');
+  acts.forEach(function(qa, k){
+    var b = document.createElement('button');
+    b.setAttribute('role', 'menuitem');
+    b.textContent = qa.name;
+    b.title = qaLines(qa.code).join(' \u00b7 ');
+    b.disabled = !SERIAL.connected || busy;
+    b.addEventListener('click', function(){ rbMenuOpen(false); qaRun(k); });
+    menu.appendChild(b);
+  });
+  if (!SERIAL.connected || busy){
+    var note = document.createElement('div');
+    note.className = 'rbMenuNote';
+    note.textContent = !SERIAL.connected ? 'Connect to the machine to run these.'
+                     : QA.active ? 'A quick action is running.'
+                     : JOB.active ? 'Not while a job is running.'
+                     : 'The machine is busy (' + (SERIAL.state || '\u2014') + ').';
+    menu.appendChild(note);
+  }
+}
+function rbMenuOpen(open){
+  var menu = document.getElementById('rbMenu');
+  if (!menu) return;
+  if (open) rbMenuRender();
+  menu.hidden = !open;
+  document.getElementById('rbActions').setAttribute('aria-expanded', open ? 'true' : 'false');
+}
 function qaRender(){
+  rbMenuRender();
   var list = document.getElementById('qaList');
   if (!list) return;
   list.innerHTML = '';
@@ -3296,6 +3429,10 @@ function applyProfileToUI(){
   v('jogFeedZ').value = PROFILE.jog.fastZ;
   v('highStart').checked = PROFILE.run.highStart;
   v('travelZIn').value = PROFILE.run.travelZ;
+  v('uiTheme').value = UITHEME.theme === 'light' ? 'light' : 'dark';
+  v('uiAccent').value = UITHEME.accent || 'gold';
+  v('uiAccentHex').value = accentColour();
+  v('uiAccentHex').style.display = v('uiAccent').value === 'custom' ? '' : 'none';
   v('tcEnable').checked = PROFILE.run.tc.enabled !== false;
   v('tcPreset').value = PROFILE.run.tc.preset || 'fc';
   v('tcEndPark').checked = PROFILE.run.parkEnd !== false;
@@ -3329,6 +3466,9 @@ function readUIToProfile(){
   PROFILE.jog.fastZ = parseFloat(v('jogFeedZ').value) || 600;
   PROFILE.run.highStart = v('highStart').checked;
   PROFILE.run.travelZ = parseFloat(v('travelZIn').value) || 5;
+  UITHEME.theme = v('uiTheme').value;
+  UITHEME.accent = v('uiAccent').value;
+  if (v('uiAccent').value === 'custom') UITHEME.accentHex = v('uiAccentHex').value;
   PROFILE.run.tc.enabled = v('tcEnable').checked;
   PROFILE.run.tc.preset = v('tcPreset').value;
   PROFILE.run.park.enabled = !!(v('pkX').value !== '' && v('pkY').value !== '');
@@ -4147,6 +4287,7 @@ function updateJobUI(statusText){
   var rbEl = document.getElementById('runBar');
   rbEl.classList.toggle('on', JOB.active || SERIAL.connected);   // visible whenever there's a machine
   rbEl.classList.toggle('job', JOB.active);                      // job-only controls appear with the job
+  rbMenuRender();
   document.getElementById('rbFill').style.width = pct + '%';
   document.getElementById('rbTxt').textContent = txt;
   document.getElementById('ovF').textContent = 'F ' + SERIAL.ov[0] + '%';
@@ -4279,7 +4420,31 @@ function wireMachine(){
     var b = e.target && e.target.closest ? e.target.closest('.hlp') : null;
     if (b && b.dataset.h) showHelp(b.dataset.h);
   });
+  ['uiTheme','uiAccent','uiAccentHex'].forEach(function(id){
+    document.getElementById(id).addEventListener('input', function(){
+      readUIToProfile();
+      document.getElementById('uiAccentHex').style.display = document.getElementById('uiAccent').value === 'custom' ? '' : 'none';
+      applyTheme();
+    });
+  });
+  themeLoad(); applyTheme(false);
+  window.addEventListener('storage', function(e){         // 454 Design changed it
+    if (e.key !== '454-theme') return;
+    themeLoad(); applyTheme(false);
+    if (!document.getElementById('setModal').hidden) applyProfileToUI();
+  });
   document.getElementById('rbJog').addEventListener('click', jogModalOpen);
+  document.getElementById('rbActions').addEventListener('click', function(e){
+    e.stopPropagation();
+    rbMenuOpen(document.getElementById('rbMenu').hidden);
+  });
+  window.addEventListener('pointerdown', function(e){          // click anywhere else closes it
+    var m = document.getElementById('rbMenu');
+    if (m.hidden) return;
+    if (m.contains(e.target) || document.getElementById('rbActions').contains(e.target)) return;
+    rbMenuOpen(false);
+  }, true);
+  rbMenuRender();
   document.getElementById('dlgOk').addEventListener('click', function(){ dlgEnd(true); });
   document.getElementById('dlgCancel').addEventListener('click', function(){ dlgEnd(false); });
   document.getElementById('dlgX').addEventListener('click', function(){ dlgEnd(false); });
@@ -4439,7 +4604,7 @@ function wireMachine(){
   // ----- profile wiring -----
   profileLoad();
   applyProfileToUI();
-  ['bsEnable','bsX','bsY','bzEnable','bzVersion','bzThk','spinType','spinupSec','jogFeedXY','jogFeedZ','highStart','travelZIn','topZIn','tcEnable','tcPreset','tcEndPark','tcX','tcY','pkX','pkY',
+  ['bsEnable','bsX','bsY','bzEnable','bzVersion','bzThk','spinType','spinupSec','jogFeedXY','jogFeedZ','highStart','uiTheme','uiAccent','uiAccentHex','travelZIn','topZIn','tcEnable','tcPreset','tcEndPark','tcX','tcY','pkX','pkY',
    'envW','envD','originSel','stockThk','rapidRate','checkEnvelope','showEnvelope'].forEach(function(id){
     document.getElementById(id).addEventListener('change', readUIToProfile);
   });
