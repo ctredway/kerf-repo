@@ -39,8 +39,10 @@
   header{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
   header .brand{font-weight:700;font-size:17px}
   header .brand span{color:var(--amber)}
-  #openDocs{color:var(--muted);text-decoration:none;font-size:13px;padding:5px 8px;border-radius:5px}
-  #openDocs:hover{color:var(--ink);background:var(--accent-faint)}
+  .hdrIcon{display:inline-flex;align-items:center;justify-content:center;width:30px;height:28px;padding:0;
+    background:none;border:1px solid transparent;border-radius:5px;color:var(--muted);cursor:pointer;text-decoration:none}
+  .hdrIcon:hover{color:var(--ink);border-color:var(--line);background:var(--accent-faint)}
+  .hdrIcon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
   #openControl{color:var(--amber);text-decoration:none;font-size:13px;font-weight:600;padding:5px 10px;border:1px solid var(--line);border-radius:5px;margin-right:8px}
   #openControl:hover{border-color:var(--amber);background:var(--accent-faint)}
   #settingsBtn{font-size:13px}
@@ -273,10 +275,10 @@
     <div class="brand">454<span> Design</span></div>
     <div class="sub" id="verSub">precision 2D sketcher</div>
     <div class="spacer"></div>
-    <a id="openDocs" href="docs/index.html" target="_blank" rel="noopener" title="Guides and reference, in a new tab">Docs ↗</a>
+    <a id="openDocs" class="hdrIcon" href="docs/index.html" target="_blank" rel="noopener" title="Docs — guides and reference, in a new tab" aria-label="Docs"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3 3.5h4.5A1.8 1.8 0 0 1 9 5v9a1.5 1.5 0 0 0-1.5-1.1H3z"/><path d="M15 3.5h-4.5A1.8 1.8 0 0 0 9 5v9a1.5 1.5 0 0 1 1.5-1.1H15z"/></svg></a>
+    <button id="libBtn" class="hdrIcon" title="Tool library — your bits, tool numbers, and feeds and speeds" aria-label="Tool library"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="M7 2.2h4v6.6l-2 4.4-2-4.4z"/><path d="M7 4.4h4M7 6.4h4M7 8.4h4" opacity=".75"/><path d="M9 13.2v2.6"/></svg></button>
+    <button id="settingsBtn" class="hdrIcon" title="Settings — units, material size, appearance, display colours" aria-label="Settings"><svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="2.6"/><path d="M9 1.6v2.2M9 14.2v2.2M16.4 9h-2.2M3.8 9H1.6M14.2 3.8l-1.6 1.6M5.4 12.6l-1.6 1.6M14.2 14.2l-1.6-1.6M5.4 5.4 3.8 3.8"/></svg></button>
     <a id="openControl" href="index.html" target="_blank" rel="noopener" title="Open 454 Control (the machine sender) in a new tab">454 Control ↗</a>
-    <button id="libBtn" title="Tool library: your bits, tool numbers, and feeds and speeds">Tool library</button>
-    <button id="settingsBtn" title="Settings — stock size, display colors">⚙ Settings</button>
     <input type="file" id="loadFile" accept=".json,.crv,.dxf" hidden>
   </header>
 
@@ -500,7 +502,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.60.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.60.1'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
