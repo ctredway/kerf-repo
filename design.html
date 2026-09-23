@@ -500,7 +500,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.58.1'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.60.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -1199,7 +1199,7 @@ var STAGE_LABEL = {
   offset0:'Offset \u2014 select or click shapes, then type the distance: "+2" outward copy, "-1.5" inward',
   copy0:  'Copy \u2014 click base point, or type the offset "@dx,dy"',
   copy1:  'Copy \u2014 click destination, or type "x,y" / "@dx,dy"',
-  mirror0:'Mirror (Shift+M) \u2014 H = left\u2194right copy, V = up\u2195down copy \u00b7 HH/VV = flip in place \u00b7 click a construction line to mirror about it (selecting it too is fine) ',
+  mirror0:'Mirror \u2014 click the shapes to mirror, then the line to mirror about \u00b7 a construction line (X) is taken as the axis automatically',
   mirror1:'Mirror \u2014 click the second point of the axis (mirrored copy)',
   rotate0:'Rotate \u2014 click the rotation center, or type "x,y"',
   rotate1:'Rotate \u2014 type the angle in degrees (+ CCW, \u2212 CW)',
@@ -1920,19 +1920,7 @@ function toolCommitText(txt){
     }
     return;
   }
-  if (TOOL === 'mirror'){
-    if (!SEL.length){ stagePrompt('selFirst'); return; }
-    var mtxt = txt.trim().toUpperCase();
-    if (mtxt === 'H' || mtxt === 'V' || mtxt === 'HH' || mtxt === 'VV'){
-      var bb = selBBox();
-      var mcx = (bb.x0+bb.x1)/2, mcy = (bb.y0+bb.y1)/2;
-      var leftRight = mtxt.charAt(0) === 'H';       // H: flip horizontally (left\u2194right, vertical axis) \u2014 VCarve convention
-      var inPlace = mtxt.length === 2;
-      applySel(!inPlace, function(en){ mirrorEnt(en, mcx, mcy, leftRight ? 0 : 1, leftRight ? 1 : 0); });
-      stagePrompt('mirror0'); persist(); draw();
-    }
-    return;
-  }
+  if (TOOL === 'mirror') return;                   // mirroring is the panel's job
   if (TOOL === 'rotate'){
     if (!SEL.length){ stagePrompt('selFirst'); return; }
     if (!DRAW){
@@ -5437,12 +5425,29 @@ function alignBtnClick(op){
 }
 
 // flip the selection in place about its own centre
+// Flip the selection. Selecting a construction line along with the shapes is the natural way to
+// say "mirror about this line", so that is what happens; otherwise the selection flips about its
+// own middle.
 function flipSelection(horizontal){
+  if (!SEL.length) return false;
+  var axisIdx = null, others = [];
+  SEL.forEach(function(i){
+    var e = DOC.ents[i];
+    if (e && e.t === 'line' && e.con && axisIdx === null) axisIdx = i; else others.push(i);
+  });
+  if (axisIdx !== null && others.length){          // a line in the selection means "mirror about this"
+    toast('info', 'Use Mirror for that', 'Flip turns the selection over where it stands. To mirror across that construction line, press Shift+M and pick the shapes and the line.');
+    return false;
+  }
   var b = selBBox();
   if (!b) return false;
   var cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+  var before = SEL.map(function(i){ return snapJSON(DOC.ents[i]); }).join('|');
   pushUndo();
   SEL.forEach(function(i){ mirrorEnt(DOC.ents[i], cx, cy, horizontal ? 0 : 1, horizontal ? 1 : 0); });
+  var after = SEL.map(function(i){ return snapJSON(DOC.ents[i]); }).join('|');
+  if (after === before)                                  // a symmetric shape flips onto itself
+    toast('info', 'Nothing moved', 'The selection is symmetric about its own centre, so flipping it looks identical. To mirror it somewhere else, use Mirror (Shift+M) with a line, or select a construction line too.');
   persist();
   return true;
 }
@@ -6206,8 +6211,8 @@ var PANEL_BTNS = {
  alBottom:{id:'alBottom', icon:'aBottom', title:'Align bottom edges with the last one picked'},
  alDistH:{id:'alDistH', icon:'aDistH', title:'Space evenly left to right \u2014 equal gaps; the leftmost and rightmost shapes stay put'},
  alDistV:{id:'alDistV', icon:'aDistV', title:'Space evenly top to bottom \u2014 equal gaps; the top and bottom shapes stay put'},
- flipHBtn:{id:'flipHBtn', icon:'flipH', title:'Flip horizontal (Shift+H) \u2014 mirror the selection left to right, in place'},
- flipVBtn:{id:'flipVBtn', icon:'flipV', title:'Flip vertical (Shift+V) \u2014 mirror the selection top to bottom, in place'},
+ flipHBtn:{id:'flipHBtn', icon:'flipH', title:'Flip horizontal (Shift+H) \u2014 turn the selection over in place, left to right, in place'},
+ flipVBtn:{id:'flipVBtn', icon:'flipV', title:'Flip vertical (Shift+V) \u2014 turn the selection over in place, top to bottom, in place'},
  curvesBtn:{id:'curvesBtn', icon:'curves', title:'Convert to curves \u2014 turn selected text into ordinary shapes you can trim, offset and cut'},
  offsetT:{tool:'offset', icon:'offs', title:'Offset (O) \u2014 select or click shapes, then type the distance: + outward, \u2212 inward (open shapes: + is left of travel)'},
  dimT:{tool:'dim', icon:'dim', title:'Dimension (D) \u2014 click a shape, then another, and type the distance: the second shape moves. Click one shape twice for its own size. Dimensions stay on the drawing and keep themselves up to date.'},
@@ -6217,7 +6222,7 @@ var PANEL_BTNS = {
  joinBtn:{id:'joinBtn', icon:'join', title:'Join \u2014 stitch selected OPEN vectors whose ends meet into one continuous contour'},
  explodeBtn:{id:'explodeBtn', icon:'expl', title:'Explode \u2014 break a contour into its individual lines and arcs'},
  copyT: {tool:'copy', icon:'copy', title:'Copy (M) \u2014 select first (V), then click base point and destination, or type @dx,dy'},
- mirrorT:{tool:'mirror', icon:'mirror', title:'Mirror (Shift+M) \u2014 select first; type H or V for a mirrored copy across the selection center, HH/VV to flip in place, or click 2 points for a custom axis'},
+ mirrorT:{tool:'mirror', icon:'mirror', title:'Mirror (Shift+M) \u2014 opens the mirror panel: pick the shapes, pick the line to mirror about, then OK. Makes mirrored copy across the selection center, HH/VV to flip in place, or click 2 points for a custom axis'},
  rotateT:{tool:'rotate', icon:'rotate', title:'Rotate (Shift+R) \u2014 select first; click the rotation center, then type the angle in degrees (+ CCW)'},
  arrayT:{tool:'array', icon:'array', title:'Array (Y) \u2014 select first; type N@dx,dy for a linear array, or click a center then type N<step\u00b0 for a circular one'},
  fillet:{tool:'fillet', icon:'fillet', title:'Fillet (F) \u2014 type a radius, then click a corner: a poly/rect corner, or where two lines meet'},
