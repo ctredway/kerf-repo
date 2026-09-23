@@ -500,7 +500,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.58.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.58.1'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
@@ -3951,8 +3951,10 @@ function mirRender(){
   document.getElementById('mirObjs').setAttribute('aria-pressed', MIR.slot === 'objs' ? 'true' : 'false');
   document.getElementById('mirLine').setAttribute('aria-pressed', MIR.slot === 'line' ? 'true' : 'false');
   document.getElementById('mirHint').textContent = MIR.slot === 'objs'
-    ? 'Click shapes on the drawing to add or remove them.'
-    : 'Click a line to mirror about \u2014 construction lines work well for this.';
+    ? (MIR.line === null
+        ? 'Click the shapes to mirror, then click a construction line for the axis (or use the Mirror line field).'
+        : 'Click shapes on the drawing to add or remove them.')
+    : 'Click the line to mirror about \u2014 a construction line (X) is the usual choice.';
   document.getElementById('mirOk').disabled = !(MIR.objs.length && MIR.line !== null);
   SEL = MIR.objs.slice();                            // selected shapes stay highlighted as usual
   draw();
@@ -3983,8 +3985,20 @@ function mirApply(){
 function mirClick(w){                                 // a canvas click while the panel is open
   var h = pickEntity(w);
   if (h === null) return;
+  var e = DOC.ents[h];
+  // A construction line is an axis, not a thing to mirror: take it as the mirror line whichever
+  // field is active. Without this, clicking it just adds it to Objects and nothing can happen.
+  if (MIR.line === null && e && e.t === 'line' && e.con){
+    MIR.line = h;
+    MIR.objs = MIR.objs.filter(function(i){ return i !== h; });
+    MIR.slot = 'objs';
+    mirRender();
+    return;
+  }
   if (MIR.slot === 'objs'){
     if (h === MIR.line){ toast('info', 'That is the mirror line', 'Pick a different shape, or change the mirror line first.'); return; }
+    if (e && e.t === 'line' && MIR.line === null)
+      toast('info', 'Using that line as the axis?', 'Click the Mirror line field first, then click the line. Construction lines (X) are taken as the axis automatically.');
     var at = MIR.objs.indexOf(h);
     if (at >= 0) MIR.objs.splice(at, 1); else MIR.objs.push(h);
   } else {
