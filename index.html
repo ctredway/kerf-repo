@@ -39,6 +39,8 @@
   header{grid-column:1/3;display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
   header .brand{font-weight:700;font-size:17px;letter-spacing:.2px}
   header .brand span{color:var(--amber)}
+  #openDocs{color:var(--muted);text-decoration:none;font-size:13px;padding:5px 8px;border-radius:5px}
+  #openDocs:hover{color:var(--ink);background:var(--accent-faint)}
   #openDesign{color:var(--amber);text-decoration:none;font-size:13px;font-weight:600;padding:5px 10px;border:1px solid var(--line);border-radius:5px;white-space:nowrap}
   #openDesign:hover{border-color:var(--amber);background:var(--accent-faint)}
   header .sub{color:var(--muted);font-size:12.5px}
@@ -279,6 +281,7 @@
       <button id="hdrHold" class="danger iconBtn" title="Feed hold — decelerate and pause motion now"><svg viewBox="0 0 16 16"><line x1="6" y1="3.5" x2="6" y2="12.5"/><line x1="10" y1="3.5" x2="10" y2="12.5"/></svg></button>
       <button id="hdrResume" class="iconBtn" title="Cycle start / resume"><svg viewBox="0 0 16 16"><path d="M5.5 3.5 L12 8 L5.5 12.5 Z"/></svg></button>
     </div>
+    <a id="openDocs" href="docs/index.html" target="_blank" rel="noopener" title="Guides and reference, in a new tab">Docs ↗</a>
     <a id="openDesign" href="design.html" target="_blank" rel="noopener" title="Open 454 Design (the sketcher) in a new tab">454 Design ↗</a>
     <button id="settingsBtn" class="iconBtn" title="Settings"><svg viewBox="0 0 16 16"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/><circle cx="10.5" cy="4" r="1.6" fill="var(--panel)"/><circle cx="5.5" cy="8" r="1.6" fill="var(--panel)"/><circle cx="11.5" cy="12" r="1.6" fill="var(--panel)"/></svg></button>
     <button id="sampleBtn" class="iconBtn" title="Load the sample file"><svg viewBox="0 0 16 16"><path d="M6 2 h4 M7 2 v4.2 l-3.4 5.8 a1.1 1.1 0 0 0 .95 1.7 h6.9 a1.1 1.1 0 0 0 .95 -1.7 L9 6.2 V2"/><line x1="5.2" y1="10.5" x2="10.8" y2="10.5"/></svg></button>
@@ -795,7 +798,7 @@
    Produces: segments (tessellated micro-moves), issues, tools
    All internal units are mm. seg.units records display units.
    ============================================================ */
-var CONTROL_VERSION = '0.21.3';
+var CONTROL_VERSION = '0.22.0';
 
 var SUPPORTED_G = {0:1,1:1,2:1,3:1,4:1,17:1,18:1,19:1,20:1,21:1,28:1,28.2:1,90:1,91:1,91.1:1,90.1:1,53:1};
 var IGNORED_G   = {40:'G40 cutter compensation off — accepted but ignored by Carbide Motion',

@@ -39,6 +39,8 @@
   header{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
   header .brand{font-weight:700;font-size:17px}
   header .brand span{color:var(--amber)}
+  #openDocs{color:var(--muted);text-decoration:none;font-size:13px;padding:5px 8px;border-radius:5px}
+  #openDocs:hover{color:var(--ink);background:var(--accent-faint)}
   #openControl{color:var(--amber);text-decoration:none;font-size:13px;font-weight:600;padding:5px 10px;border:1px solid var(--line);border-radius:5px;margin-right:8px}
   #openControl:hover{border-color:var(--amber);background:var(--accent-faint)}
   #settingsBtn{font-size:13px}
@@ -271,6 +273,7 @@
     <div class="brand">454<span> Design</span></div>
     <div class="sub" id="verSub">precision 2D sketcher</div>
     <div class="spacer"></div>
+    <a id="openDocs" href="docs/index.html" target="_blank" rel="noopener" title="Guides and reference, in a new tab">Docs ↗</a>
     <a id="openControl" href="index.html" target="_blank" rel="noopener" title="Open 454 Control (the machine sender) in a new tab">454 Control ↗</a>
     <button id="libBtn" title="Tool library: your bits, tool numbers, and feeds and speeds">Tool library</button>
     <button id="settingsBtn" title="Settings — stock size, display colors">⚙ Settings</button>
@@ -497,7 +500,7 @@
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script>
 'use strict';
-var DESIGN_VERSION = '0.57.0'; // bump on every build — shown in the header
+var DESIGN_VERSION = '0.58.0'; // bump on every build — shown in the header
 /* ============================================================
    454 Design — geometry model
    Entities: {t:'line',x1,y1,x2,y2} {t:'circle',cx,cy,r}
